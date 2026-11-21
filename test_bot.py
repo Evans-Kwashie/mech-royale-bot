@@ -70,6 +70,39 @@ class WeaponIntegrationTests(unittest.TestCase):
                 self.assertTrue(any(action["fire"]), action)
 
 
+class LootTests(unittest.TestCase):
+    def test_ground_weapon_is_reached_and_taken(self):
+        stream = os.path.join(KIT, "check", "stream.jsonl.gz")
+        if not os.path.isfile(stream):
+            self.skipTest("development kit replay is not present")
+        with gzip.open(stream, "rt", encoding="utf-8") as f:
+            config = json.loads(next(f))["config"]
+        bot = SurvivalPolicy({"map": {"dir": os.path.join(KIT, "arena")},
+                              "config": config, "seed": 1, "slot": 1})
+        me = {"id": 1, "pos": [100, 0, bot.arena.height(100, 0)],
+              "vel": [0, 0, 0], "aim": [0, 0], "hp": 1400, "max_hp": 1400,
+              "energy": 100, "max_energy": 100, "grounded": True, "cubes": 0,
+              "upgrades": [], "weapons": [{"kind": "gun", "cooldown": 0,
+                    "ammo": 12, "reload": 0, "stats": config["weapons"]["gun"]}, None],
+              "in_zone": True, "stats": dict(config["mech"])}
+        pos = [112, 0, bot.arena.height(112, 0)]
+        obs = {"type": "obs", "tick": 0, "t": 0, "alive": 16, "self": me,
+               "mechs": [], "projectiles": [], "crates": [], "cubes": [],
+               "pickups": [{"id": 8001, "kind": "laser", "pos": pos}],
+               "sounds": [], "beams": [], "events": [],
+               "zone": {"center": [0, 0], "radius": 560, "next_center": [0, 0],
+                        "next_radius": 380, "shrink_start": 60, "shrink_end": 110,
+                        "dps": 20}, "offer": None, "drops": []}
+        action = bot.act(obs)
+        self.assertEqual(bot.goal_kind, "weapon")
+        self.assertGreater(action["move"][0], 0.9)
+        self.assertNotIn("take", action)
+        me["pos"] = pos
+        action = bot.act(obs)
+        self.assertEqual(action.get("take"), 8001)
+        self.assertEqual(action["move"], [0.0, 0.0])
+
+
 class ReplayTests(unittest.TestCase):
     def test_real_observation_replay(self):
         stream = os.path.join(KIT, "check", "stream.jsonl.gz")

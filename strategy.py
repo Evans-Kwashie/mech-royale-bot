@@ -65,15 +65,21 @@ class SurvivalPolicy:
         self.boosting = False
         self.last_combat_t = -100.0
         self.retreat_until = -100.0
+        self.last_scan_t = -100.0
+        self.scan_yaw = self.phase
+        self.loot_goal_id = None
+        self.rejected_loot_until = {}
 
     def _remember(self, obs):
         t = obs["t"]
         me = obs["self"]
         for p in obs.get("pickups", []):
             self.loot[p["id"]] = (p["kind"], p["pos"], t)
+            self.rejected_loot_until.pop(p["id"], None)
         for c in obs.get("cubes", []):
             self.cubes[c["id"]] = (c["pos"], t)
-        self.loot = {k: v for k, v in self.loot.items() if t - v[2] < 75}
+        self.loot = {k: v for k, v in self.loot.items() if t - v[2] < 600}
+        self.rejected_loot_until = {k: v for k, v in self.rejected_loot_until.items() if v > t}
         self.cubes = {k: v for k, v in self.cubes.items() if t - v[1] < 30}
         for e in obs["events"]:
             if e["type"] == "damaged" and e.get("weapon") != "zone":
@@ -88,8 +94,13 @@ class SurvivalPolicy:
                                           me["pos"][1] + 65 * math.sin(a)], t)
             elif e["type"] in ("took", "dropped"):
                 self.loot.pop(e.get("id"), None)
-            elif e["type"] == "take_failed" and e.get("reason") == "gone":
-                self.loot.pop(e.get("id"), None)
+            elif e["type"] == "take_failed":
+                if e.get("reason") == "gone":
+                    self.loot.pop(e.get("id"), None)
+                else:
+                    # Repeatedly commanding a pickup from outside its range is
+                    # wasteful; finish approaching or reject an obstructed one.
+                    self.rejected_loot_until[e["id"]] = t + 2.0
         for m in obs["mechs"]:
             if m["kind"] == "mech":
                 self.last_enemy_t = t
@@ -122,7 +133,7 @@ class SurvivalPolicy:
             if rank <= own_rank or p["kind"] == "gun":
                 continue
             d = distance2(me["pos"], p["pos"])
-            if d <= 4.2 and abs(me["pos"][2] - p["pos"][2]) <= 4.2:
+            if d <= 3.6 and abs(me["pos"][2] - p["pos"][2]) <= 3.6:
                 if best is None or rank > WEAPON_RANK[best["kind"]]:
                     best = p
         if best:
@@ -232,27 +243,42 @@ class SurvivalPolicy:
     def _loot_goal(self, obs):
         me = obs["self"]
         p = me["pos"]
+        t = obs["t"]
         second = me["weapons"][1] if len(me["weapons"]) > 1 else None
         rank = WEAPON_RANK.get(second["kind"], -1) if second else -1
         candidates = []
-        for kind, pos, seen_t in self.loot.values():
-            if WEAPON_RANK.get(kind, -1) > rank:
-                d = distance2(p, pos)
-                height_delta = pos[2] - p[2]
-                ground = self.arena.height(pos[0], pos[1])
-                # Do not attempt a ground route to a rooftop pickup.
-                if pos[2] > ground + 3.0 and height_delta > 4.0:
+        for loot_id, (kind, pos, seen_t) in self.loot.items():
+            if loot_id in self.rejected_loot_until or WEAPON_RANK.get(kind, -1) <= rank:
+                continue
+            d = distance2(p, pos)
+            height_delta = pos[2] - p[2]
+            surface = self.arena.surface_height(pos[0], pos[1])
+            # Do not attempt a ground route to a rooftop pickup.  Roof height,
+            # not just terrain height, identifies roof loot correctly.
+            if pos[2] > surface + 3.0 and height_delta > 4.0:
+                continue
+            if d < 145 and height_delta < 5.0:
+                zone = obs["zone"]
+                if (t > zone["shrink_start"] - 8
+                        and distance2(pos, zone["next_center"]) > zone["next_radius"] - 8):
                     continue
-                if 5 < d < 115 and height_delta < 5.0:
-                    candidates.append((d - WEAPON_RANK[kind] * 12, pos, "weapon"))
-        if second is not None and obs["t"] > 20:
-            for pos, seen_t in self.cubes.values():
+                detour = 0 if self.arena.walkable(p, pos) else 22
+                priority = 30 if second is None else 8
+                score = d + detour - priority - WEAPON_RANK[kind] * 4
+                candidates.append((score, pos, "weapon", loot_id))
+        # Nearby cubes are useful even before finding a special weapon, but a
+        # reachable weapon remains the stronger early-game priority.
+        if t > 8:
+            for cube_id, (pos, seen_t) in self.cubes.items():
                 d = distance2(p, pos)
-                if 2 < d < 65:
-                    candidates.append((d + 18, pos, "cube"))
+                if 1.5 < d < 70 and pos[2] - p[2] < 5.0:
+                    score = d + (10 if second is not None else 35)
+                    candidates.append((score, pos, "cube", cube_id))
         if not candidates:
+            self.loot_goal_id = None
             return None
-        _, pos, kind = min(candidates, key=lambda c: c[0])
+        _, pos, kind, loot_id = min(candidates, key=lambda c: c[0])
+        self.loot_goal_id = loot_id
         return pos, kind
 
     def _drop_goal(self, obs):
@@ -369,10 +395,14 @@ class SurvivalPolicy:
             zone_goal = self._safe_point(obs)
         must_rotate = outside_safe or not me["in_zone"] or t + travel_s + 12 >= zone["shrink_end"]
         loot = self._loot_goal(obs)
+        second = me["weapons"][1] if len(me["weapons"]) > 1 else None
+        looting_safe = recent_damage > 4.0 and nearest_d > (90 if second is None else 65)
         if retreating and threats:
             goal, self.goal_kind = self._escape_goal(obs, threats), "retreat"
         elif outside_safe or not me["in_zone"] or must_rotate:
             goal, self.goal_kind = zone_goal, "zone"
+        elif loot and looting_safe:
+            goal, self.goal_kind = loot[0], loot[1]
         elif nearest and (nearest_d < (195 if late else 145) or recent_damage < 3.5
                            or (nearest_d < 180 and self.retreat_until < t)):
             goal, self.goal_kind = self._combat_goal(obs, nearest, threats), "fight"
@@ -392,6 +422,15 @@ class SurvivalPolicy:
 
         if "move" not in action:
             action["move"] = self._navigate(obs, goal)
+        if self.goal_kind in ("weapon", "cube"):
+            # Pickup range is 4 m horizontally; don't stop at the ordinary
+            # navigation arrival radius and spam take from 5 m away.
+            remaining = distance2(p, goal)
+            if remaining < 3.0:
+                action["move"] = [0.0, 0.0]
+            elif remaining < 10:
+                ux, uy = unit(goal[0] - p[0], goal[1] - p[1])
+                action["move"] = [ux * 0.65, uy * 0.65]
         action["move"] = self._dodge(obs, action["move"])
 
         # Detect an obstructed route and use a short jump/jet rather than remain
@@ -451,7 +490,10 @@ class SurvivalPolicy:
                 else:
                     action["aim"] = [self.phase + t * 0.9, -0.03]
             else:
-                action["aim"] = [self.phase + t * 0.9, -0.03]
+                if t - self.last_scan_t >= 1.0:
+                    self.scan_yaw += math.radians(100)
+                    self.last_scan_t = t
+                action["aim"] = [self.scan_yaw, -0.03]
             # Never hold a laser charge while simply scanning.
             if len(me["weapons"]) > 1 and me["weapons"][1] and me["weapons"][1]["kind"] == "laser":
                 if me["weapons"][1].get("charge", 0) > 0:

@@ -141,6 +141,14 @@ class Arena:
                         return True
         return False
 
+    def surface_height(self, x: float, y: float) -> float:
+        """Ground or the highest static roof beneath an object."""
+        height = self.height(x, y)
+        for p in self.prisms_near(x, y):
+            if p["kind"] != "bridge" and p["top"] > height and self._in_prism(p, x, y):
+                height = p["top"]
+        return height
+
     def _clear_terrain(self, x: float, y: float, z: float, r: float) -> bool:
         # Reject steep one-cell terrain discontinuities and tiny river islands.
         for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r)):
@@ -206,7 +214,10 @@ class Arena:
         if self.walkable(start, goal):
             return [tuple(goal)]
         if self.walkable(start, sp) and self.walkable(sp, gp) and self.walkable(gp, goal):
-            return [sp, gp, tuple(goal)]
+            # Do not spend a waypoint returning to the snapped start unless it
+            # is needed to leave an obstructed cell.
+            return ([sp, gp, tuple(goal)] if math.dist(start, sp) > 3.0
+                    else [gp, tuple(goal)])
 
         started = time.perf_counter()
         open_heap = [(0.0, 0.0, s)]
@@ -252,8 +263,10 @@ class Arena:
         while nodes[-1] != s:
             nodes.append(parent[nodes[-1]])
         nodes.reverse()
-        points = [sp] + [self._grid_point(n) for n in nodes[1:]]
+        points = [self._grid_point(n) for n in nodes[1:]]
         points.append(tuple(goal))
+        if not points:
+            return [tuple(goal)]
         # Greedy line-of-walk smoothing greatly reduces grid zig-zag.
         result = []
         anchor = tuple(start)
