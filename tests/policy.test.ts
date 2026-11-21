@@ -32,6 +32,21 @@ test("laser charging keeps gun lead until the hitscan handoff window", () => {
   assert.equal(a.fire![1], true)
 })
 
+test("mobility upgrades outrank marginal gun throughput upgrades", () => {
+  const obs = observation()
+  obs.offer = {
+    id: 1,
+    expires: 5,
+    choices: [
+      { id: "gun_damage", name: "Tungsten rounds", desc: "+15% arm gun damage" },
+      { id: "servos", name: "Leg servos", desc: "+8% walk and boost speed" },
+      { id: "gun_rate", name: "Rotary feed", desc: "+15% arm gun fire rate" },
+    ],
+  }
+  const action = bot().act(obs)
+  assert.equal(action.pick, 1)
+})
+
 test("full aligned laser releases and preserves a lost target's charge", () => {
   const obs = observation()
   obs.self.aim = [Math.PI / 2, 0]
