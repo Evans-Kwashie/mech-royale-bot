@@ -69,6 +69,8 @@ class SurvivalPolicy:
         self.scan_yaw = self.phase
         self.loot_goal_id = None
         self.rejected_loot_until = {}
+        self.laser_dodge_side = {}
+        self.laser_threat_id = None
 
     def _remember(self, obs):
         t = obs["t"]
@@ -316,6 +318,80 @@ class SurvivalPolicy:
         magnitude = min(1.0, max(0.35, d / 9.0))
         return [ux * magnitude, uy * magnitude]
 
+    def _charging_laser_dodge(self, obs):
+        """Sidestep a telegraphed laser before its hitscan beam fires."""
+        me = obs["self"]
+        p = me["pos"]
+        radius = me["stats"].get("radius", 2.5)
+        threats = []
+        charging_ids = set()
+        for enemy in obs["mechs"]:
+            if enemy["kind"] != "mech" or not enemy.get("charging"):
+                continue
+            e = enemy["pos"]
+            dx, dy = p[0] - e[0], p[1] - e[1]
+            distance = math.hypot(dx, dy)
+            if distance < 3.0 or distance > 295.0:
+                continue
+            yaw = enemy.get("aim", [0.0, 0.0])[0]
+            fx, fy = math.cos(yaw), math.sin(yaw)
+            along = dx * fx + dy * fy
+            if along <= 0:
+                continue
+            # Use the horizontal beam line as a conservative warning: the
+            # enemy may pitch its torso before releasing the beam.
+            cross = dx * fy - dy * fx
+            # A torso slewing toward us is also dangerous, but don't dodge a
+            # charger visibly aiming in a completely different direction.
+            miss = abs(cross) - along * math.tan(math.radians(12))
+            if miss > radius + 3.0:
+                continue
+            eye = [p[0], p[1], p[2] + me["stats"].get("eye_height", 8)]
+            enemy_eye = [e[0], e[1], e[2] + 8 * (1 + 0.05 * enemy.get("cubes", 0))]
+            if not self.arena.clear_shot(enemy_eye, eye):
+                continue
+            charging_ids.add(enemy["id"])
+            threats.append((miss, distance, enemy, cross, fx, fy))
+        self.laser_dodge_side = {k: v for k, v in self.laser_dodge_side.items()
+                                 if k in charging_ids}
+        if not threats:
+            self.laser_threat_id = None
+            return None
+
+        # Close lightning is a better answer: it shorts the laser for 2 s.
+        for _, distance, enemy, _, _, _ in threats:
+            for slot, weapon in enumerate(me["weapons"]):
+                if not weapon or weapon["kind"] != "lightning":
+                    continue
+                stats = weapon.get("stats", {})
+                if (distance <= stats.get("range", 45) - 1
+                        and weapon.get("cooldown", 0) <= 0
+                        and me["energy"] >= stats.get("energy", 3) + 1):
+                    self.laser_threat_id = enemy["id"]
+                    return None
+
+        _, distance, enemy, cross, fx, fy = min(threats, key=lambda t: (t[0], t[1]))
+        eid = enemy["id"]
+        side = self.laser_dodge_side.get(eid)
+        if side is None:
+            side = self.strafe if abs(cross) < 0.5 else (1 if cross > 0 else -1)
+        candidates = []
+        for candidate_side in ((side, -side) if side is not None else (1, -1)):
+            # Moving with the sign of cross increases our perpendicular miss.
+            ux, uy = -fy * candidate_side, fx * candidate_side
+            for reach in (6.0, 11.0, 18.0):
+                q = [p[0] + ux * reach, p[1] + uy * reach]
+                if self.arena.walkable(p, q):
+                    candidates.append((reach, candidate_side, ux, uy))
+                    break
+        if not candidates:
+            self.laser_threat_id = eid
+            return None
+        _, side, ux, uy = max(candidates)
+        self.laser_dodge_side[eid] = side
+        self.laser_threat_id = eid
+        return [ux, uy]
+
     def _dodge(self, obs, move):
         me = obs["self"]
         p = me["pos"]
@@ -432,6 +508,10 @@ class SurvivalPolicy:
                 ux, uy = unit(goal[0] - p[0], goal[1] - p[1])
                 action["move"] = [ux * 0.65, uy * 0.65]
         action["move"] = self._dodge(obs, action["move"])
+        laser_dodge = self._charging_laser_dodge(obs)
+        if laser_dodge is not None:
+            action["move"] = laser_dodge
+            self.last_dodge_t = t
 
         # Detect an obstructed route and use a short jump/jet rather than remain
         # stuck forever.  A fresh route is requested on the following decision.
@@ -459,6 +539,8 @@ class SurvivalPolicy:
         # Keep pressure on an isolated visible target.  Only a genuine retreat
         # with broken contact justifies a ceasefire for regeneration.
         target = nearest
+        if self.laser_threat_id is not None:
+            target = next((m for m in visible_mechs if m["id"] == self.laser_threat_id), target)
         if target is None and not self.threat_memory and recent_damage > 5:
             npcs = [m for m in obs["mechs"] if m["kind"] == "npc" and distance2(p, m["pos"]) < 28]
             target = npcs[0] if npcs else None

@@ -70,6 +70,41 @@ class WeaponIntegrationTests(unittest.TestCase):
                 self.assertTrue(any(action["fire"]), action)
 
 
+class LaserDodgeTests(unittest.TestCase):
+    def setUp(self):
+        stream = os.path.join(KIT, "check", "stream.jsonl.gz")
+        if not os.path.isfile(stream):
+            self.skipTest("development kit replay is not present")
+        with gzip.open(stream, "rt", encoding="utf-8") as f:
+            self.config = json.loads(next(f))["config"]
+        self.bot = SurvivalPolicy({"map": {"dir": os.path.join(KIT, "arena")},
+                                   "config": self.config, "seed": 1, "slot": 1})
+        self.me = {"pos": [100, 0, self.bot.arena.height(100, 0)],
+                   "stats": dict(self.config["mech"]), "energy": 100,
+                   "weapons": [None, None]}
+        self.enemy = {"id": 4, "kind": "mech", "charging": True,
+                      "pos": [100, -100, self.bot.arena.height(100, -100)],
+                      "aim": [math.pi / 2, 0], "cubes": 0}
+        self.obs = {"self": self.me, "mechs": [self.enemy]}
+
+    def test_sidesteps_threatening_charge(self):
+        move = self.bot._charging_laser_dodge(self.obs)
+        self.assertIsNotNone(move)
+        self.assertGreater(abs(move[0]), 0.8)
+        self.assertAlmostEqual(move[1], 0, places=5)
+
+    def test_ignores_laser_aimed_elsewhere(self):
+        self.enemy["aim"] = [0, 0]
+        self.assertIsNone(self.bot._charging_laser_dodge(self.obs))
+
+    def test_prefers_close_lightning_counter(self):
+        self.enemy["pos"] = [100, -30, self.bot.arena.height(100, -30)]
+        self.me["weapons"] = [None, {"kind": "lightning", "cooldown": 0,
+                                      "stats": self.config["weapons"]["lightning"]}]
+        self.assertIsNone(self.bot._charging_laser_dodge(self.obs))
+        self.assertEqual(self.bot.laser_threat_id, 4)
+
+
 class LootTests(unittest.TestCase):
     def test_ground_weapon_is_reached_and_taken(self):
         stream = os.path.join(KIT, "check", "stream.jsonl.gz")
