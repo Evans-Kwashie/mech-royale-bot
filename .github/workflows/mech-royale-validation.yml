@@ -1,0 +1,66 @@
+name: Mech Royale candidate validation
+
+on:
+  push:
+    branches:
+      - "experiment/7-point-campaign"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: TypeScript unit tests
+        run: npm test
+
+      - name: TypeScript syntax checks
+        run: npm run check
+
+      - name: Python regression tests
+        run: python -m unittest discover -v
+
+      - name: Download official Mechfight kit
+        run: |
+          curl --fail --location --retry 3 \
+            https://www.joinbuilders.org/buildathon/tracks/builders/files/mechfight-kit.tar.gz \
+            --output /tmp/mechfight-kit.tar.gz
+          mkdir -p /tmp/mechfight-kit
+          tar -xzf /tmp/mechfight-kit.tar.gz -C /tmp/mechfight-kit --strip-components=1
+
+      - name: Official protocol replay (host)
+        run: python /tmp/mechfight-kit/check/check.py -- node bot.ts
+
+      - name: Build submission image
+        run: docker build --platform linux/amd64 -t mech-royale-candidate .
+
+      - name: Official protocol replay (1 CPU / 512 MB Docker sandbox)
+        run: |
+          python /tmp/mechfight-kit/check/check.py --map-dir /arena -- \
+            docker run --rm -i --network none --cpus 1 --memory 512m \
+            --read-only --tmpfs /tmp:rw,size=64m --user 65534:65534 \
+            -v /tmp/mechfight-kit/arena:/arena:ro mech-royale-candidate
+
+      - name: Approximate 16-seed regression comparison
+        run: |
+          # Fix the repository-local evaluator's root path for CI execution only.
+          sed -i 's/Path(__file__).resolve().parents\[1\]/Path(__file__).resolve().parents[2]/' tools/eval/simulate.py
+          python tools/eval/simulate.py --kit /tmp/mechfight-kit \
+            --bot bot.ts --baseline baselines/r1ver/repaired/bot.ts \
+            --seed 19551 --matches 16 --output /tmp/mech-royale-regression.json
