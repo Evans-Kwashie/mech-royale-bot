@@ -196,8 +196,11 @@ export class Brain {
       const age = t - tr.t
       if (age > 4) continue
       const hitUs = t - (this.attackers.get(tr.id) ?? -99) < 3 ? 50 : 0
-      const stick = tr.id === this.targetId && t - this.targetT < 2 ? 40 : 0
-      const s = d + (tr.hp / 1400) * 90 + age * 30 - hitUs - stick
+      // Commit to the current target longer and favour nearly-dead mechs, so
+      // damage already dealt converts into kills instead of being spread out.
+      const stick = tr.id === this.targetId && t - this.targetT < 3 ? 80 : 0
+      const lowBonus = tr.hp / tr.maxHp < 0.3 ? 60 : 0
+      const s = d + (tr.hp / 1400) * 90 + age * 30 - hitUs - stick - lowBonus
       if (s < tScore) {
         tScore = s
         target = tr
