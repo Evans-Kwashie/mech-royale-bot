@@ -572,39 +572,6 @@ func (b *Brain) step(o *Obs, act *Action) {
 	if target != nil {
 		b.stickID, b.stickAt = target.ID, now
 	}
-	// Prefer an exposed part of the selected target. If its whole collision
-	// cylinder is blocked, take another clear contact instead of chasing a wall.
-	if target != nil && !b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, b.center(target)) {
-		if b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, Vec3{target.Pos[0], target.Pos[1], target.Pos[2] + b.Cfg.Mech.Height*b.scaleOf(target.Cubes)*0.85}) {
-			// The caller below already uses this upper-body fallback.
-		} else {
-			bestAlt, altScore := (*Track)(nil), bestScore
-			for _, alt := range seen {
-				if alt.ID == target.ID || !alt.LOS || alt.Dist > maxT {
-					continue
-				}
-				center := b.center(alt)
-				if !b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, center) {
-					continue
-				}
-				angle := math.Abs(angDiff(me.Aim[0], math.Atan2(alt.Pos[1]-y, alt.Pos[0]-x)))
-				if angle > 1.0 {
-					continue
-				}
-				score := alt.Dist + hpw*alt.HP + 30*angle
-				if now-alt.HitMe < 4 {
-					score -= 40
-				}
-				if score < altScore {
-					bestAlt, altScore = alt, score
-				}
-			}
-			if bestAlt != nil {
-				target = bestAlt
-				b.stickID, b.stickAt = target.ID, now
-			}
-		}
-	}
 	foe := target
 	if foe == nil && b.P.Peek {
 		foe = hidden
@@ -623,7 +590,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 		b.lastThreatAt = now
 	}
 
-	finishing := target != nil && target.Dist < 140 && (target.HP < 250 || target.HP < me.HP*0.65)
+	finishing := target != nil && target.Dist < 120 && (target.HP < 200 || target.HP < me.HP*0.5)
 	_, myLaser := hasWeapon(me.Weapons, "laser")
 	outgunned := target != nil && holds(target.Weapons, "laser") && myLaser == nil && target.Dist > 55 && hpFrac < 0.8
 	swamped := b.P.CrowdHide && (crowd >= 3 || (crowd == 2 && hpFrac < 0.65) || outgunned)
@@ -1923,12 +1890,6 @@ func (b *Brain) dodge(o *Obs) (dx, dy float64, laser bool) {
 		if math.Abs(angDiff(m.Aim[0], toMe)) > 0.15 {
 			continue
 		}
-		enemyMuzzle := m.Pos
-		enemyMuzzle[2] += b.Cfg.Mech.MuzzleHeight * b.scaleOf(m.Cubes)
-		if !b.W.Clear(enemyMuzzle, Vec3{cx, cy, cz}) &&
-			!b.W.Clear(enemyMuzzle, Vec3{cx, cy, me.Pos[2] + me.Stats.Height*0.85}) {
-			continue
-		}
 		dx += math.Cos(toMe+math.Pi/2*b.strafe) * 1.5
 		dy += math.Sin(toMe+math.Pi/2*b.strafe) * 1.5
 		laser = true
@@ -1997,7 +1958,7 @@ func squadParams(p Params) Params {
 	p.Ghost = false
 	p.Peek = false
 	p.LaserFirst = true
-	p.LaserRange = 120
+	p.LaserRange = 110
 	p.LootRadius = 150
 	p.CrateUntil = 1e9
 	p.Stick = 120
@@ -2010,7 +1971,7 @@ func squadParams(p Params) Params {
 
 	p.LaserSeek = 240
 	p.LaserUp = true
-	p.LaserRange = 140
+	p.LaserRange = 110
 	p.Finish = 14
 
 	return p
