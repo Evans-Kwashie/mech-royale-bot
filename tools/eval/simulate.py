@@ -28,6 +28,8 @@ class BotProcess:
     def __init__(self, script):
         if script.suffix == ".py":
             command = [sys.executable, "-B", "-u", str(script)]
+        elif script.suffix == "":
+            command = [str(script)]
         elif script.suffix in {".js", ".ts", ".mjs", ".cjs", ".mts", ".cts"}:
             node = which("node")
             if not node:

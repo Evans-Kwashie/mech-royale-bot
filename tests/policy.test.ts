@@ -47,6 +47,19 @@ test("mobility upgrades outrank marginal gun throughput upgrades", () => {
   assert.equal(action.pick, 1)
 })
 
+test("a held laser makes laser damage outrank nanites and servos, but not armor", () => {
+  const offer = (ids: string[]) => ({ id: 1, expires: 5, choices: ids.map((id) => ({ id, name: id, desc: "" })) })
+  const obs = observation()
+  arm(obs, "laser")
+  obs.offer = offer(["servos", "nanites", "laser_damage"])
+  assert.equal(bot().act(obs).pick, 2)
+  obs.offer = offer(["laser_damage", "armor"])
+  assert.equal(bot().act(obs).pick, 1)
+  const noLaser = observation()
+  noLaser.offer = offer(["laser_damage", "servos"])
+  assert.equal(bot().act(noLaser).pick, 1)
+})
+
 test("full aligned laser releases and preserves a lost target's charge", () => {
   const obs = observation()
   obs.self.aim = [Math.PI / 2, 0]
@@ -58,7 +71,7 @@ test("full aligned laser releases and preserves a lost target's charge", () => {
   obs.t = 0.1
   obs.tick = 2
   const b = bot().act(obs)
-  assert.equal(b.fire![1], false)
+  assert.equal(b.fire![1], true)
 })
 
 test("lightning uses its direct angle rather than stale gun-lead error", () => {
@@ -103,11 +116,11 @@ test("charging laser does not trigger the stuck jet watchdog", () => {
   assert.equal(a.jump, false)
 })
 
-test("a partial charge without any target is released intentionally", () => {
+test("an invested laser charge is not dumped when its target disappears", () => {
   const obs = observation()
   arm(obs, "laser", 0.4)
   const a = bot().act(obs)
-  assert.equal(a.fire![1], false)
+  assert.equal(a.fire![1], true)
 })
 
 test("real replay produces bounded finite actions and fires", () => {
@@ -127,4 +140,23 @@ test("real replay produces bounded finite actions and fires", () => {
     shots += Number(a.fire![0]) + Number(a.fire![1])
   }
   assert.ok(shots > 0)
+})
+
+test("a nearby crate behind cover is approached instead of idling in place", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  brain.map!.los = () => false
+  const a = brain.act(obs)
+  assert.ok(Math.hypot(a.move![0], a.move![1]) > 0.5, `expected to move, got ${a.move}`)
+})
+
+test("a nearby crate in clear line of fire is still shot from position", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  const a = brain.act(obs)
+  assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })

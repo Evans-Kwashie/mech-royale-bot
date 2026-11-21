@@ -51,7 +51,7 @@ export class Brain {
 
   constructor(hello: Hello) {
     this.cfg = hello.config
-    let s = (hello.seed >>> 0) || 1
+    let s = ((hello.seed ^ 0xc2b2ae35) >>> 0) || 1 // independent strafe sequence
     this.rng = () => {
       s ^= s << 13
       s >>>= 0
@@ -123,7 +123,11 @@ export class Brain {
     if (o.offer) {
       let bi = 0, bs = 1e9
       o.offer.choices.forEach((c, i) => {
-        const r = UPGRADE_PREF.indexOf(c.id)
+        // Holding a laser: its damage/charge upgrades rank right after the
+        // two durability picks, since the laser is our main kill weapon.
+        const holdsLaser = me.weapons.some((w) => w?.kind === "laser")
+        const laserBoost = holdsLaser && (c.id === "laser_damage" || c.id === "laser_charge")
+        const r = laserBoost ? (c.id === "laser_damage" ? 1.5 : 1.6) : UPGRADE_PREF.indexOf(c.id)
         const s = r < 0 ? 50 : r
         if (s < bs) {
           bs = s
@@ -492,7 +496,10 @@ export class Brain {
             const sc = d + 5
             if (sc < bs) {
               bs = sc
-              best = d > 30 ? [c.pos[0], c.pos[1]] : [x, y]
+              // Hold position only with a clear line of fire, as for NPCs;
+              // otherwise a crate behind cover pins the mech in place.
+              const canShoot = d <= 30 && map?.los(x, y, muzzleZ, c.pos[0], c.pos[1], c.pos[2] + 1.2) !== false
+              best = canShoot ? [x, y] : [c.pos[0], c.pos[1]]
             }
           }
         }
@@ -683,9 +690,10 @@ export class Brain {
       }
       aimPitch = 0
     }
-    // A target lost for several seconds will not justify another automatic
-    // release at the scanning angle; release deliberately and cool down.
-    if (!target && laserS >= 0 && laserCharging) fire[laserS] = false
+    // Never dump an invested charge just because this tick has no target.
+    // Hold through the brief loss of contact; automatic release remains bounded
+    // by the server's hold_s timeout and the next target's firing gates.
+    if (!target && laserS >= 0 && laserCharging) fire[laserS] = true
     // reload when safe
     if (gunS >= 0 && mode !== "fight") {
       const g = me.weapons[gunS]!
