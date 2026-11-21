@@ -593,7 +593,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 	finishing := target != nil && target.Dist < 120 && (target.HP < 200 || target.HP < me.HP*0.5)
 	_, myLaser := hasWeapon(me.Weapons, "laser")
 	outgunned := target != nil && holds(target.Weapons, "laser") && myLaser == nil && target.Dist > 55 && hpFrac < 0.8
-	swamped := b.P.CrowdHide && (crowd >= 3 || (crowd == 2 && hpFrac < 0.65) || outgunned)
+	swamped := b.P.CrowdHide && (crowd >= 4 || (crowd == 2 && hpFrac < 0.3) || outgunned)
 	if b.P.OddsFlee > 0 && target != nil && !finishing && b.odds(me, target, now, false) < b.P.OddsFlee {
 		b.oddsFleeUntil = now + 5
 	}
