@@ -157,7 +157,7 @@ func DefaultParams() Params {
 }
 
 func NewBrain(h *Hello, w *World) *Brain {
-	seed := int64(h.Seed) ^ int64(0x9e3779b9)
+	seed := int64(h.Seed)
 	if seed == 0 {
 		seed = int64(h.Slot) + 1
 	}
@@ -590,7 +590,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 		b.lastThreatAt = now
 	}
 
-	finishing := target != nil && target.Dist < 120 && (target.HP < 200 || target.HP < me.HP*0.5)
+	finishing := target != nil && target.Dist < 140 && (target.HP < 250 || target.HP < me.HP*0.65)
 	_, myLaser := hasWeapon(me.Weapons, "laser")
 	outgunned := target != nil && holds(target.Weapons, "laser") && myLaser == nil && target.Dist > 55 && hpFrac < 0.8
 	swamped := b.P.CrowdHide && (crowd >= 3 || (crowd == 2 && hpFrac < 0.65) || outgunned)
