@@ -27,6 +27,14 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Download official Mechfight kit
+        run: |
+          curl --fail --location --retry 3 \
+            https://www.joinbuilders.org/buildathon/tracks/builders/files/mechfight-kit.tar.gz \
+            --output /tmp/mechfight-kit.tar.gz
+          mkdir -p mechfight-kit
+          tar -xzf /tmp/mechfight-kit.tar.gz -C mechfight-kit --strip-components=1
+
       - name: TypeScript unit tests
         run: npm test
 
@@ -36,31 +44,23 @@ jobs:
       - name: Python regression tests
         run: python -m unittest discover -v
 
-      - name: Download official Mechfight kit
-        run: |
-          curl --fail --location --retry 3 \
-            https://www.joinbuilders.org/buildathon/tracks/builders/files/mechfight-kit.tar.gz \
-            --output /tmp/mechfight-kit.tar.gz
-          mkdir -p /tmp/mechfight-kit
-          tar -xzf /tmp/mechfight-kit.tar.gz -C /tmp/mechfight-kit --strip-components=1
-
       - name: Official protocol replay (host)
-        run: python /tmp/mechfight-kit/check/check.py -- node bot.ts
+        run: python mechfight-kit/check/check.py -- node bot.ts
 
       - name: Build submission image
         run: docker build --platform linux/amd64 -t mech-royale-candidate .
 
       - name: Official protocol replay (1 CPU / 512 MB Docker sandbox)
         run: |
-          python /tmp/mechfight-kit/check/check.py --map-dir /arena -- \
+          python mechfight-kit/check/check.py --map-dir /arena -- \
             docker run --rm -i --network none --cpus 1 --memory 512m \
             --read-only --tmpfs /tmp:rw,size=64m --user 65534:65534 \
-            -v /tmp/mechfight-kit/arena:/arena:ro mech-royale-candidate
+            -v "$GITHUB_WORKSPACE/mechfight-kit/arena:/arena:ro" mech-royale-candidate
 
       - name: Approximate 16-seed regression comparison
         run: |
           # Fix the repository-local evaluator's root path for CI execution only.
           sed -i 's/Path(__file__).resolve().parents\[1\]/Path(__file__).resolve().parents[2]/' tools/eval/simulate.py
-          python tools/eval/simulate.py --kit /tmp/mechfight-kit \
+          python tools/eval/simulate.py --kit mechfight-kit \
             --bot bot.ts --baseline baselines/r1ver/repaired/bot.ts \
             --seed 19551 --matches 16 --output /tmp/mech-royale-regression.json
