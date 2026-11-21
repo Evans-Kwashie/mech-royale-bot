@@ -1,6 +1,9 @@
 .git
-.gitignore
-.vscode
+baselines
+tools
+tests
+docs
+eval-results
+*.py
 __pycache__
-*.py[cod]
-test_bot.py
+node_modules
