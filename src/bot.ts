@@ -13,9 +13,12 @@ type Track = { id: number; pos: number[]; vel: number[]; hp: number; maxHp: numb
 
 const WEAPON_PREF: Record<string, number> = { laser: 3.2, lightning: 2.5, mortar: 1, gun: 0 }
 const UPGRADE_PREF = [
-  "plating", "armor", "nanites", "lightning_efficiency", "laser_damage", "laser_charge", "gun_damage", "gun_rate",
-  "lightning_range", "lightning_chain", "gyros", "servos", "gun_mag", "capacitor", "reactor", "jets", "gun_velocity",
-  "sensors", "mortar_reload", "mortar_velocity", "mortar_splash", "laser_pierce",
+  // Placement is primarily a survival problem: improve health, sustain, and
+  // escape mobility before spending offers on marginal weapon throughput.
+  "plating", "armor", "nanites", "servos", "capacitor", "reactor", "jets", "gyros",
+  "lightning_efficiency", "laser_charge", "laser_damage", "gun_damage", "gun_rate",
+  "lightning_range", "lightning_chain", "gun_velocity", "gun_mag", "sensors",
+  "mortar_reload", "mortar_velocity", "mortar_splash", "laser_pierce",
 ]
 
 export class Brain {
