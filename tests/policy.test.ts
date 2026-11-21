@@ -160,3 +160,20 @@ test("a nearby crate in clear line of fire is still shot from position", () => {
   const a = brain.act(obs)
   assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })
+
+
+
+test("a partial laser charge that already kills is released early; a non-lethal one keeps charging", () => {
+  const setup = (hp: number) => {
+    const obs = observation()
+    const mz = obs.self.stats.muzzle_height ?? 7
+    obs.self.aim = [0, Math.atan2(4.5 - mz, 100)]
+    target(obs, 100, 0)
+    obs.mechs[0].hp = hp
+    arm(obs, "laser", 0.3)
+    return bot().act(obs)
+  }
+  // 0.3 s of 0.75 s charge -> (0.35 + 0.65 * 0.4) * 315 = 192 damage
+  assert.equal(setup(120).fire![1], false, "lethal partial charge should be released")
+  assert.equal(setup(1000).fire![1], true, "non-lethal partial charge should keep charging")
+})

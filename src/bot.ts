@@ -306,7 +306,21 @@ export class Brain {
 
       // Gun lead remains useful while a laser charges. Hand the torso to the
       // hitscan aim only shortly before a full-charge release or a close arc.
-      const requestedAim = lightningReady || laserCharging && (laser?.charge ?? 0) >= (laser?.stats.charge ?? 0.75) - 0.1 ? directAim : gunAim
+      // Laser damage rises linearly from min_frac at no charge to full damage at
+      // full charge (protocol §weapons), with cook-off against mortar holders.
+      // A partial charge that already kills (with margin for stale HP) should
+      // fire now instead of giving the target more time to escape or hit back.
+      const laserKills = (() => {
+        if (!laser || !laserCharging || !seen || !hasLos || target.hp >= target.maxHp * 0.999) return false
+        const s = laser.stats
+        const c = laser.charge ?? 0
+        if (c < (s.min_charge ?? 0.15)) return false
+        const minFrac = s.min_frac ?? 0.35
+        const frac = minFrac + (1 - minFrac) * Math.min(1, c / s.charge)
+        const cook = target.weapons.includes("mortar") ? 1 + (s.cookoff ?? 0.6) : 1
+        return s.damage * frac * cook >= target.hp * 1.2
+      })()
+      const requestedAim = lightningReady || laserKills || laserCharging && (laser?.charge ?? 0) >= (laser?.stats.charge ?? 0.75) - 0.1 ? directAim : gunAim
       ;[aimYaw, aimPitch] = requestedAim
       wantAim = true
       const aligned = (from: readonly number[], to: readonly number[], yawTol: number, pitchTol: number) =>
@@ -325,7 +339,7 @@ export class Brain {
       if (laser) {
         const charge = laser.charge ?? 0
         if (charge > 0) {
-          const release = charge >= laser.stats.charge - 0.02 && seen && hasLos &&
+          const release = (charge >= laser.stats.charge - 0.02 || laserKills) && seen && hasLos &&
             aligned(me.aim, directAim, tol * 0.9, tol * 1.5 + 0.02)
           // Releasing the trigger fires a charged laser, so hold until aligned.
           fire[laserS] = !release
