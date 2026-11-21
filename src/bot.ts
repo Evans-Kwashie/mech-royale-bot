@@ -197,7 +197,9 @@ export class Brain {
       if (age > 4) continue
       const hitUs = t - (this.attackers.get(tr.id) ?? -99) < 3 ? 50 : 0
       const stick = tr.id === this.targetId && t - this.targetT < 2 ? 40 : 0
-      const s = d + (tr.hp / 1400) * 90 + age * 30 - hitUs - stick
+      // Finish nearly-dead mechs: damage already dealt becomes a kill (and cubes).
+      const lowBonus = tr.hp / tr.maxHp < 0.3 ? 60 : 0
+      const s = d + (tr.hp / 1400) * 90 + age * 30 - hitUs - stick - lowBonus
       if (s < tScore) {
         tScore = s
         target = tr

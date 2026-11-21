@@ -160,3 +160,18 @@ test("a nearby crate in clear line of fire is still shot from position", () => {
   const a = brain.act(obs)
   assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })
+
+test("a nearly dead mech is targeted over a closer healthy one (stickiness unchanged)", () => {
+  const obs = observation()
+  const me = obs.self
+  const mech = (id: number, x: number, hp: number) => ({ id, kind: "mech" as const, pos: [me.pos[0] + x, me.pos[1], 0], vel: [0, 0, 0], aim: [Math.PI, 0], hp, max_hp: 1400, cubes: 0, weapons: ["gun"], charging: false })
+  obs.mechs = [mech(5, 80, 1400), mech(6, 170, 300)]
+  const brain = bot()
+  brain.act(obs)
+  assert.equal(brain.targetId, 6)
+  const far = observation()
+  far.mechs = [mech(5, 80, 1400), mech(6, 250, 300)]
+  const b2 = bot()
+  b2.act(far)
+  assert.equal(b2.targetId, 5, "a distant weak mech must not beat a close healthy one")
+})
