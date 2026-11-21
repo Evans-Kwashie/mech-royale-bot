@@ -47,6 +47,19 @@ test("mobility upgrades outrank marginal gun throughput upgrades", () => {
   assert.equal(action.pick, 1)
 })
 
+test("a held laser makes laser damage outrank nanites and servos, but not armor", () => {
+  const offer = (ids: string[]) => ({ id: 1, expires: 5, choices: ids.map((id) => ({ id, name: id, desc: "" })) })
+  const obs = observation()
+  arm(obs, "laser")
+  obs.offer = offer(["servos", "nanites", "laser_damage"])
+  assert.equal(bot().act(obs).pick, 2)
+  obs.offer = offer(["laser_damage", "armor"])
+  assert.equal(bot().act(obs).pick, 1)
+  const noLaser = observation()
+  noLaser.offer = offer(["laser_damage", "servos"])
+  assert.equal(bot().act(noLaser).pick, 1)
+})
+
 test("full aligned laser releases and preserves a lost target's charge", () => {
   const obs = observation()
   obs.self.aim = [Math.PI / 2, 0]

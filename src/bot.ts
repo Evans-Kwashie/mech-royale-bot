@@ -123,7 +123,11 @@ export class Brain {
     if (o.offer) {
       let bi = 0, bs = 1e9
       o.offer.choices.forEach((c, i) => {
-        const r = UPGRADE_PREF.indexOf(c.id)
+        // Holding a laser: its damage/charge upgrades rank right after the
+        // two durability picks, since the laser is our main kill weapon.
+        const holdsLaser = me.weapons.some((w) => w?.kind === "laser")
+        const laserBoost = holdsLaser && (c.id === "laser_damage" || c.id === "laser_charge")
+        const r = laserBoost ? (c.id === "laser_damage" ? 1.5 : 1.6) : UPGRADE_PREF.indexOf(c.id)
         const s = r < 0 ? 50 : r
         if (s < bs) {
           bs = s
