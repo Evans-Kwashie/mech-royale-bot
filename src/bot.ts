@@ -492,7 +492,10 @@ export class Brain {
             const sc = d + 5
             if (sc < bs) {
               bs = sc
-              best = d > 30 ? [c.pos[0], c.pos[1]] : [x, y]
+              // Hold position only with a clear line of fire, as for NPCs;
+              // otherwise a crate behind cover pins the mech in place.
+              const canShoot = d <= 30 && map?.los(x, y, muzzleZ, c.pos[0], c.pos[1], c.pos[2] + 1.2) !== false
+              best = canShoot ? [x, y] : [c.pos[0], c.pos[1]]
             }
           }
         }

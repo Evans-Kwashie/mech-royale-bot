@@ -128,3 +128,22 @@ test("real replay produces bounded finite actions and fires", () => {
   }
   assert.ok(shots > 0)
 })
+
+test("a nearby crate behind cover is approached instead of idling in place", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  brain.map!.los = () => false
+  const a = brain.act(obs)
+  assert.ok(Math.hypot(a.move![0], a.move![1]) > 0.5, `expected to move, got ${a.move}`)
+})
+
+test("a nearby crate in clear line of fire is still shot from position", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  const a = brain.act(obs)
+  assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
+})
