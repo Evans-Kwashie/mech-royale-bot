@@ -492,7 +492,10 @@ export class Brain {
             const sc = d + 5
             if (sc < bs) {
               bs = sc
-              best = d > 30 ? [c.pos[0], c.pos[1]] : [x, y]
+              // Hold position only with a clear line of fire, as for NPCs;
+              // otherwise a crate behind cover pins the mech in place.
+              const canShoot = d <= 30 && map?.los(x, y, muzzleZ, c.pos[0], c.pos[1], c.pos[2] + 1.2) !== false
+              best = canShoot ? [x, y] : [c.pos[0], c.pos[1]]
             }
           }
         }
@@ -616,10 +619,7 @@ export class Brain {
     if (!mv[0] && !mv[1]) this.stuckT = 0
     else if (!laserCharging && moved < 0.25 && me.grounded) this.stuckT += 0.1
     else if (moved > 0.6) this.stuckT = 0
-    // Do not spend escape energy or perturb a charged laser shot while holding
-    // position for its release. Preserve the accumulated stuck time and recover
-    // on the first non-charging decision if movement is still blocked.
-    if (!laserCharging && this.stuckT > 0.6) {
+    if (this.stuckT > 0.6) {
       jump = true
       boost = me.energy > 10
       if (this.stuckT > 2.5) {

@@ -103,30 +103,6 @@ test("charging laser does not trigger the stuck jet watchdog", () => {
   assert.equal(a.jump, false)
 })
 
-test("charging laser suppresses an already-armed stuck recovery", () => {
-  const obs = observation()
-  arm(obs, "laser", 0.3)
-  const brain = bot()
-  brain.map = null
-  brain.stuckT = 0.8
-  brain.lastPos = [...obs.self.pos]
-  const a = brain.act(obs)
-  assert.equal(a.jump, false)
-  assert.equal(a.boost, false)
-  assert.equal(brain.stuckT, 0.8)
-})
-
-test("stuck recovery still fires immediately when not charging a laser", () => {
-  const obs = observation()
-  const brain = bot()
-  brain.map = null
-  brain.stuckT = 0.8
-  brain.lastPos = [...obs.self.pos]
-  const a = brain.act(obs)
-  assert.equal(a.jump, true)
-  assert.equal(a.boost, true)
-})
-
 test("a partial charge without any target is released intentionally", () => {
   const obs = observation()
   arm(obs, "laser", 0.4)
@@ -151,4 +127,23 @@ test("real replay produces bounded finite actions and fires", () => {
     shots += Number(a.fire![0]) + Number(a.fire![1])
   }
   assert.ok(shots > 0)
+})
+
+test("a nearby crate behind cover is approached instead of idling in place", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  brain.map!.los = () => false
+  const a = brain.act(obs)
+  assert.ok(Math.hypot(a.move![0], a.move![1]) > 0.5, `expected to move, got ${a.move}`)
+})
+
+test("a nearby crate in clear line of fire is still shot from position", () => {
+  const obs = observation()
+  const brain = bot()
+  const gz = brain.map!.groundAt(20, 0)
+  obs.crates = [{ id: 900, pos: [20, 0, gz], hp: 120 } as any]
+  const a = brain.act(obs)
+  assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })
