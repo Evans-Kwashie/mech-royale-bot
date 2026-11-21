@@ -1,9 +1,5 @@
 # Attrition-control Mech Royale candidate
 
-## Confirmed result
-
-**Official practice: 5.83**, receipt `BB-82C986AE`, at `15b84389c4e5c005e7feb7052249a7728ba804d2`, selected as the final entry on 2026-11-21. This branch now tests a separate follow-up; the winning commit remains available and selected.
-
 This is a **separate candidate branch** for the Builders Mech Royale track. It preserves the previous TypeScript bot and selected 5.46 rollback on `main`; this branch runs a distinct Go combat/cover controller.
 
 ## Provenance

@@ -58,6 +58,7 @@ type Brain struct {
 	coverOK   bool
 
 	lastHurt    float64
+	dropQuietUntil float64 // Only the opportunistic-drop quiet gate reads this.
 	hurtBearing float64
 	hurtSeenBy  bool
 
@@ -141,6 +142,7 @@ type Params struct {
 	LaserUp    bool
 	EconSafe   float64
 	Opening    bool
+	Finish     float64
 }
 
 func DefaultParams() Params {
@@ -155,7 +157,7 @@ func DefaultParams() Params {
 }
 
 func NewBrain(h *Hello, w *World) *Brain {
-	seed := int64(h.Seed)
+	seed := int64(h.Seed) ^ int64(0x9e3779b9)
 	if seed == 0 {
 		seed = int64(h.Slot) + 1
 	}
@@ -289,6 +291,7 @@ func (b *Brain) observe(o *Obs) {
 		e := &o.Events[i]
 		switch e.Type {
 		case "damaged":
+			b.dropQuietUntil = now + 6
 			if e.Weapon == "npc" && e.Bearing != nil {
 				b.npcHurt, b.npcBearing = now, *e.Bearing
 			}
@@ -705,8 +708,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 		if hot || (light != nil && foe.Dist <= light.Stats.Range+6 && me.Energy >= light.Stats.Energy*3) {
 			ready = true
 		}
-		if !b.P.Peek && (light != nil || laser != nil) &&
-			!(gun != nil && laser != nil && light == nil && laser.Cooldown > 0.25 && !finishing) {
+		if !b.P.Peek && (light != nil || laser != nil) {
 			ready = true
 		}
 		wantLos := -1.0
@@ -720,7 +722,13 @@ func (b *Brain) step(o *Obs, act *Action) {
 				}
 			}
 		}
-		mx, my = b.fightMove(o, foe, seen, wantLos)
+		if keep := b.P; b.P.Finish > 0 && foe.HP < 0.38*foe.MaxHP && hpFrac > 0.42 && crowd <= 2 {
+			b.P.GunRange, b.P.LaserRange, b.P.LightRange = b.P.Finish, b.P.Finish, b.P.Finish
+			mx, my = b.fightMove(o, foe, seen, wantLos)
+			b.P = keep
+		} else {
+			mx, my = b.fightMove(o, foe, seen, wantLos)
+		}
 		if light != nil && foe.Dist > 50 && me.Energy > 55 && wantLos > 0 {
 			boost = true
 		}
@@ -1526,6 +1534,65 @@ type lootChoice struct {
 	value float64
 }
 
+// Opportunistic drops supplement only the existing quiet squad loot branch.
+// The ETA is a bounded planning proxy, not a route or capture certificate.
+func (b *Brain) opportunisticDrop(o *Obs, d *Drop) bool {
+	me := &o.Self
+	now := b.now
+	if !b.pracOn || b.retreat || !me.InZone || !me.Grounded || b.W == nil ||
+		b.Cfg.Cubes.StatCap <= 0 || me.Cubes < 0 || me.Cubes >= b.Cfg.Cubes.StatCap ||
+		now <= b.dropQuietUntil || len(o.Projectiles) > 0 {
+		return false
+	}
+	for _, weapon := range me.Weapons {
+		if weapon != nil && weapon.Kind == "laser" && weapon.Charge > 0 {
+			return false
+		}
+	}
+	for _, track := range b.tracks {
+		if now-track.Seen <= 3 && hyp(track.Pos[0]-me.Pos[0], track.Pos[1]-me.Pos[1]) <= 180 {
+			return false
+		}
+	}
+	cur := b.curZone(&o.Zone)
+	for _, value := range []float64{now, me.Stats.WalkSpeed, me.Stats.Radius, b.Cfg.Cubes.SizePerCube,
+		me.Pos[0], me.Pos[1], me.Pos[2], d.Pos[0], d.Pos[1], d.Pos[2],
+		d.LandsIn, d.CaptureS, d.Progress, d.Radius, cur.X, cur.Y, cur.R,
+		o.Zone.NextCenter[0], o.Zone.NextCenter[1], o.Zone.NextRadius} {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+	if me.Stats.WalkSpeed <= 0 || me.Stats.Radius <= 0 || b.Cfg.Cubes.SizePerCube < 0 ||
+		d.CaptureS <= 0 || d.Radius <= 0 || d.LandsIn < 0 || d.Progress < 0 ||
+		math.Abs(me.Pos[2]-b.W.GroundAt(me.Pos[0], me.Pos[1])) > 1.5 ||
+		math.Abs(d.Pos[2]-b.W.GroundAt(d.Pos[0], d.Pos[1])) > 1.5 || b.W.OffMain(me.Pos[0], me.Pos[1]) {
+		return false
+	}
+	distance := hyp(d.Pos[0]-me.Pos[0], d.Pos[1]-me.Pos[1])
+	eta := 1.45 * distance / me.Stats.WalkSpeed
+	if eta > 15 || (d.Holder != nil && *d.Holder != me.ID) {
+		return false
+	}
+	capture := d.CaptureS
+	if d.Holder != nil && *d.Holder == me.ID && distance <= d.Radius && d.LandsIn == 0 {
+		capture = math.Max(0, capture-math.Min(d.Progress, capture))
+	}
+	wait := math.Max(0, d.LandsIn-eta)
+	total := eta + wait + capture
+	if wait > 6 || total > 20 {
+		return false
+	}
+	radius := me.Stats.Radius * (1 + b.Cfg.Cubes.SizePerCube*float64(me.Cubes))
+	margin := math.Max(8, radius+2)
+	if math.IsInf(radius, 0) || radius <= 0 ||
+		hyp(d.Pos[0]-cur.X, d.Pos[1]-cur.Y) > cur.R-margin ||
+		hyp(d.Pos[0]-o.Zone.NextCenter[0], d.Pos[1]-o.Zone.NextCenter[1]) > o.Zone.NextRadius-margin {
+		return false
+	}
+	return now+total+3 <= b.zoneDeadline(&o.Zone, d.Pos[0], d.Pos[1], margin)
+}
+
 func (b *Brain) chooseLoot(o *Obs, hpFrac float64, danger bool) *lootChoice {
 	me := &o.Self
 	x, y := me.Pos[0], me.Pos[1]
@@ -1692,7 +1759,7 @@ func (b *Brain) chooseLoot(o *Obs, hpFrac float64, danger bool) *lootChoice {
 	for i := range o.Drops {
 		d := &o.Drops[i]
 		dist := hyp(d.Pos[0]-x, d.Pos[1]-y)
-		if b.P.UseDrops && dist/me.Stats.WalkSpeed < d.LandsIn+25 && !danger {
+		if (b.P.UseDrops || b.opportunisticDrop(o, d)) && dist/me.Stats.WalkSpeed < d.LandsIn+25 && !danger {
 			consider("drop", d.ID, d.Pos, 260)
 		}
 	}
@@ -1905,6 +1972,7 @@ func squadParams(p Params) Params {
 	p.LaserSeek = 240
 	p.LaserUp = true
 	p.LaserRange = 140
+	p.Finish = 14
 
 	return p
 }
