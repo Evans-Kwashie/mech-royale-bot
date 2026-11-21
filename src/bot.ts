@@ -51,7 +51,7 @@ export class Brain {
 
   constructor(hello: Hello) {
     this.cfg = hello.config
-    let s = (hello.seed >>> 0) || 1
+    let s = ((hello.seed ^ 0x9e3779b9) >>> 0) || 1 // re-roll salt: same policy, different strafe randomness
     this.rng = () => {
       s ^= s << 13
       s >>>= 0
