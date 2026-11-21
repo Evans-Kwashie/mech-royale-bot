@@ -616,7 +616,10 @@ export class Brain {
     if (!mv[0] && !mv[1]) this.stuckT = 0
     else if (!laserCharging && moved < 0.25 && me.grounded) this.stuckT += 0.1
     else if (moved > 0.6) this.stuckT = 0
-    if (this.stuckT > 0.6) {
+    // Do not spend escape energy or perturb a charged laser shot while holding
+    // position for its release. Preserve the accumulated stuck time and recover
+    // on the first non-charging decision if movement is still blocked.
+    if (!laserCharging && this.stuckT > 0.6) {
       jump = true
       boost = me.energy > 10
       if (this.stuckT > 2.5) {
