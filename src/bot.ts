@@ -127,7 +127,10 @@ export class Brain {
         // two durability picks, since the laser is our main kill weapon.
         const holdsLaser = me.weapons.some((w) => w?.kind === "laser")
         const laserBoost = holdsLaser && (c.id === "laser_damage" || c.id === "laser_charge")
-        const r = laserBoost ? (c.id === "laser_damage" ? 1.5 : 1.6) : UPGRADE_PREF.indexOf(c.id)
+        // Lightning without a laser: its efficiency/range are the damage upgrades.
+        const holdsLightning = me.weapons.some((w) => w?.kind === "lightning")
+        const lightBoost = holdsLightning && !holdsLaser && (c.id === "lightning_efficiency" || c.id === "lightning_range")
+        const r = laserBoost ? (c.id === "laser_damage" ? 1.5 : 1.6) : lightBoost ? (c.id === "lightning_efficiency" ? 1.5 : 1.6) : UPGRADE_PREF.indexOf(c.id)
         const s = r < 0 ? 50 : r
         if (s < bs) {
           bs = s

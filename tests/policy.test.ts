@@ -160,3 +160,16 @@ test("a nearby crate in clear line of fire is still shot from position", () => {
   const a = brain.act(obs)
   assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })
+
+test("a held lightning (no laser) ranks lightning upgrades right after armor", () => {
+  const offer = (ids: string[]) => ({ id: 1, expires: 5, choices: ids.map((id) => ({ id, name: id, desc: "" })) })
+  const obs = observation()
+  arm(obs, "lightning")
+  obs.offer = offer(["servos", "nanites", "lightning_efficiency"])
+  assert.equal(bot().act(obs).pick, 2)
+  obs.offer = offer(["lightning_efficiency", "armor"])
+  assert.equal(bot().act(obs).pick, 1)
+  const gunOnly = observation()
+  gunOnly.offer = offer(["servos", "lightning_efficiency"])
+  assert.equal(bot().act(gunOnly).pick, 0)
+})
