@@ -13,6 +13,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      MECHFIGHT_KIT: ${{ github.workspace }}/mechfight-kit
     steps:
       - name: Checkout candidate
         uses: actions/checkout@v4
@@ -34,6 +36,7 @@ jobs:
             --output /tmp/mechfight-kit.tar.gz
           mkdir -p mechfight-kit
           tar -xzf /tmp/mechfight-kit.tar.gz -C mechfight-kit --strip-components=1
+          test -s "$MECHFIGHT_KIT/check/stream.jsonl.gz"
 
       - name: TypeScript unit tests
         run: npm test
@@ -45,22 +48,22 @@ jobs:
         run: python -m unittest discover -v
 
       - name: Official protocol replay (host)
-        run: python mechfight-kit/check/check.py -- node bot.ts
+        run: python "$MECHFIGHT_KIT/check/check.py" -- node bot.ts
 
       - name: Build submission image
         run: docker build --platform linux/amd64 -t mech-royale-candidate .
 
       - name: Official protocol replay (1 CPU / 512 MB Docker sandbox)
         run: |
-          python mechfight-kit/check/check.py --map-dir /arena -- \
+          python "$MECHFIGHT_KIT/check/check.py" --map-dir /arena -- \
             docker run --rm -i --network none --cpus 1 --memory 512m \
             --read-only --tmpfs /tmp:rw,size=64m --user 65534:65534 \
-            -v "$GITHUB_WORKSPACE/mechfight-kit/arena:/arena:ro" mech-royale-candidate
+            -v "$MECHFIGHT_KIT/arena:/arena:ro" mech-royale-candidate
 
       - name: Approximate 16-seed regression comparison
         run: |
           # Fix the repository-local evaluator's root path for CI execution only.
           sed -i 's/Path(__file__).resolve().parents\[1\]/Path(__file__).resolve().parents[2]/' tools/eval/simulate.py
-          python tools/eval/simulate.py --kit mechfight-kit \
+          python tools/eval/simulate.py --kit "$MECHFIGHT_KIT" \
             --bot bot.ts --baseline baselines/r1ver/repaired/bot.ts \
             --seed 19551 --matches 16 --output /tmp/mech-royale-regression.json
