@@ -335,23 +335,20 @@ class SurvivalPolicy:
             nearest_d = distance2(p, nearest["pos"])
 
         late = zone["next_radius"] <= 70 or zone["radius"] <= 75
-        # Hysteresis prevents one retreat/fight decision flip per tick.  Healing
-        # requires a genuine ceasefire: dealing damage resets regen just as
-        # receiving damage does.
-        if hp_frac < 0.58 and nearest_d < 150:
-            self.retreat_until = max(self.retreat_until, t + 3.0)
-        if recent_damage < 0.8:
-            self.retreat_until = max(self.retreat_until, t + 0.7)
-        elif len(visible_mechs) >= 2:
-            self.retreat_until = max(self.retreat_until, t + 2.5)
-        recovering = hp_frac < 0.94 and t < self.retreat_until
-        # Once a pursuer closes in, maintaining distance and returning fire is
-        # safer than turning a low-HP mech into a free running target.
-        if nearest_d < 85 or late or hp_frac >= 0.93:
-            retreating = False
-        else:
-            retreating = recovering or (hp_frac < 0.6 and recent_damage < 5.5) or len(visible_mechs) >= 2
-        if self.retreat_until < t - 10:
+        # Retreat is a response to real danger, not to every incoming bullet.
+        # In v2 ordinary hits continuously refreshed ceasefire, letting a single
+        # pursuer deal damage without receiving any in return.
+        close_enemies = sum(distance2(p, m["pos"]) < 130 for m in visible_mechs)
+        critical = hp_frac < 0.30 and nearest_d < 140
+        outnumbered = close_enemies >= 2
+        if critical:
+            self.retreat_until = max(self.retreat_until, t + 2.0)
+        elif outnumbered and recent_damage < 1.0:
+            self.retreat_until = max(self.retreat_until, t + 1.5)
+        recovering = hp_frac < 0.90 and t < self.retreat_until
+        # At close range or late in the match there is no useful running room.
+        retreating = (recovering or outnumbered) and nearest_d >= 65 and not late
+        if self.retreat_until < t - 8:
             self.retreat_until = -100.0
 
         # Opportunistic supply repair only when uncontested and very close.
@@ -376,8 +373,8 @@ class SurvivalPolicy:
             goal, self.goal_kind = self._escape_goal(obs, threats), "retreat"
         elif outside_safe or not me["in_zone"] or must_rotate:
             goal, self.goal_kind = zone_goal, "zone"
-        elif nearest and (nearest_d < (175 if late else 95) or recent_damage < 2.5
-                           or (nearest_d < 155 and recent_damage > 5 and self.retreat_until < t)): 
+        elif nearest and (nearest_d < (195 if late else 145) or recent_damage < 3.5
+                           or (nearest_d < 180 and self.retreat_until < t)):
             goal, self.goal_kind = self._combat_goal(obs, nearest, threats), "fight"
         elif drop:
             goal, self.goal_kind = drop[0], "drop"
@@ -420,8 +417,8 @@ class SurvivalPolicy:
         action["boost"] = bool(me["grounded"] and moving and
                                ((self.boosting and urgent) or unsticking))
 
-        # Fight only at useful ranges.  Avoid attracting the whole lobby to a
-        # distant target that has not engaged us.
+        # Keep pressure on an isolated visible target.  Only a genuine retreat
+        # with broken contact justifies a ceasefire for regeneration.
         target = nearest
         if target is None and not self.threat_memory and recent_damage > 5:
             npcs = [m for m in obs["mechs"] if m["kind"] == "npc" and distance2(p, m["pos"]) < 28]
@@ -432,13 +429,16 @@ class SurvivalPolicy:
             muzzle = me["stats"].get("muzzle_height", 7)
             origin = [p[0], p[1], p[2] + muzzle]
             center = [target["pos"][0], target["pos"][1], target["pos"][2] + 4.0]
-            engage_range = 185 if late or recent_damage < 3 else 115
+            engage_range = 205 if late or recent_damage < 5 else 155
             if target["kind"] == "npc":
                 engage_range = 28
-            if recovering and recent_damage > 0.65:
-                engage_range = 0  # ceasefire long enough for regeneration
-            elif recent_damage < 0.65 or d < 100:
-                engage_range = max(engage_range, 185)  # face and answer the attacker
+            if recovering and recent_damage > 1.0:
+                # Continue firing if the pursuer still has a clear shot at us.
+                # Ceasefire only pays when cover actually protects us.
+                attacker_los = self.arena.clear_shot(center, origin)
+                engage_range = 180 if attacker_los else 0
+            elif recent_damage < 3.5 or d < 120:
+                engage_range = max(engage_range, 190)
             clear = d <= engage_range and self.arena.clear_shot(origin, center)
         combat = self.weapons.act(obs, target, clear)
         action.update(combat)
