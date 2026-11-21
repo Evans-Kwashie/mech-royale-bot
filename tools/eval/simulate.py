@@ -21,7 +21,7 @@ from practice_engine import MOVEMENT_MODEL, Sim
 from sim_world import World
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class BotProcess:
@@ -130,7 +130,7 @@ def play(script, hello, world, seed, roof_locations=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kit", type=Path, required=True, help="extracted official mechfight-kit directory")
-    parser.add_argument("--bot", default=str(ROOT / "bot.py"), help="bot script path or git:REV[:path]")
+    parser.add_argument("--bot", default=str(ROOT / "bot.ts"), help="bot script path or git:REV[:path]")
     parser.add_argument("--baseline", help="optional second bot script path or git:REV[:path]")
     parser.add_argument("--roof-loot", action="store_true", help="place the kit's rooftop fraction on mapped building tops")
     parser.add_argument("--seed", type=int, default=1, help="first world seed")
