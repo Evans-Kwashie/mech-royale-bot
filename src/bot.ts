@@ -366,7 +366,7 @@ export class Brain {
       const finishing = theirFrac < 0.2 && hpFrac > 0.2 && threats <= 2
       const losing = !finishing && ((hpFrac < 0.35 && theirFrac > hpFrac + 0.1) || (threats >= 2 && hpFrac < 0.55) || (threats >= 3 && hpFrac < 0.8))
       if (losing) this.hideUntil = t + 6
-      const prefer = lightS >= 0 ? 28 : laserS >= 0 ? 145 : 70
+      const prefer = lightS >= 0 ? 28 : laserS >= 0 ? 115 : 70
       if (losing && map) {
         mode = "retreat"
         const cov = map.coverFrom(x, y, tp[0], tp[1], tp[2] + 8, 50)

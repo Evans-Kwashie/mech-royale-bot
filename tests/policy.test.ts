@@ -160,3 +160,15 @@ test("a nearby crate in clear line of fire is still shot from position", () => {
   const a = brain.act(obs)
   assert.equal(Math.hypot(a.move![0], a.move![1]), 0)
 })
+
+test("laser holder stops backing off once inside 115 m band, but still backs off when close", () => {
+  const near = observation()
+  arm(near, "laser")
+  target(near, 100, 0)
+  const a = bot().act(near)
+  assert.ok(a.move![0] > -0.3, `at 100 m should hold range, got ${a.move}`)
+  const close = observation()
+  arm(close, "laser")
+  target(close, 60, 0)
+  assert.ok(bot().act(close).move![0] < -0.3, "at 60 m should back off")
+})
