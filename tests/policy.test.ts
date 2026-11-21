@@ -172,3 +172,16 @@ test("laser holder stops backing off once inside 115 m band, but still backs off
   target(close, 60, 0)
   assert.ok(bot().act(close).move![0] < -0.3, "at 60 m should back off")
 })
+
+test("a held lightning (no laser) ranks lightning upgrades right after armor", () => {
+  const offer = (ids: string[]) => ({ id: 1, expires: 5, choices: ids.map((id) => ({ id, name: id, desc: "" })) })
+  const obs = observation()
+  arm(obs, "lightning")
+  obs.offer = offer(["servos", "nanites", "lightning_efficiency"])
+  assert.equal(bot().act(obs).pick, 2)
+  obs.offer = offer(["lightning_efficiency", "armor"])
+  assert.equal(bot().act(obs).pick, 1)
+  const gunOnly = observation()
+  gunOnly.offer = offer(["servos", "lightning_efficiency"])
+  assert.equal(bot().act(gunOnly).pick, 0)
+})
