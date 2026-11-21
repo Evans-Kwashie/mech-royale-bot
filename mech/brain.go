@@ -572,6 +572,39 @@ func (b *Brain) step(o *Obs, act *Action) {
 	if target != nil {
 		b.stickID, b.stickAt = target.ID, now
 	}
+	// Prefer an exposed part of the selected target. If its whole collision
+	// cylinder is blocked, take another clear contact instead of chasing a wall.
+	if target != nil && !b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, b.center(target)) {
+		if b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, Vec3{target.Pos[0], target.Pos[1], target.Pos[2] + b.Cfg.Mech.Height*b.scaleOf(target.Cubes)*0.85}) {
+			// The caller below already uses this upper-body fallback.
+		} else {
+			bestAlt, altScore := (*Track)(nil), bestScore
+			for _, alt := range seen {
+				if alt.ID == target.ID || !alt.LOS || alt.Dist > maxT {
+					continue
+				}
+				center := b.center(alt)
+				if !b.W.Clear(Vec3{x, y, zf + st.MuzzleHeight}, center) {
+					continue
+				}
+				angle := math.Abs(angDiff(me.Aim[0], math.Atan2(alt.Pos[1]-y, alt.Pos[0]-x)))
+				if angle > 1.0 {
+					continue
+				}
+				score := alt.Dist + hpw*alt.HP + 30*angle
+				if now-alt.HitMe < 4 {
+					score -= 40
+				}
+				if score < altScore {
+					bestAlt, altScore = alt, score
+				}
+			}
+			if bestAlt != nil {
+				target = bestAlt
+				b.stickID, b.stickAt = target.ID, now
+			}
+		}
+	}
 	foe := target
 	if foe == nil && b.P.Peek {
 		foe = hidden
@@ -590,7 +623,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 		b.lastThreatAt = now
 	}
 
-	finishing := target != nil && target.Dist < 120 && (target.HP < 200 || target.HP < me.HP*0.5)
+	finishing := target != nil && target.Dist < 140 && (target.HP < 250 || target.HP < me.HP*0.65)
 	_, myLaser := hasWeapon(me.Weapons, "laser")
 	outgunned := target != nil && holds(target.Weapons, "laser") && myLaser == nil && target.Dist > 55 && hpFrac < 0.8
 	swamped := b.P.CrowdHide && (crowd >= 3 || (crowd == 2 && hpFrac < 0.65) || outgunned)
@@ -883,18 +916,14 @@ func (b *Brain) step(o *Obs, act *Action) {
 			}
 		}
 	}
-	shotTarget := target
-	if shotTarget == nil && farm == nil && farmPos == nil && !b.retreat {
-		shotTarget = b.continuingLaserTarget(laser)
-	}
 	switch {
-	case shotTarget != nil:
-		sc := b.scaleOf(shotTarget.Cubes)
+	case target != nil:
+		sc := b.scaleOf(target.Cubes)
 		tr, th = b.Cfg.Mech.Radius*sc, b.Cfg.Mech.Height*sc
-		tp, tv = shotTarget.Pos, shotTarget.Vel
+		tp, tv = target.Pos, target.Vel
 		tp[2] += th * 0.5
 		if !b.W.Clear(muzzle, tp) {
-			tp[2] = shotTarget.Pos[2] + th*0.85
+			tp[2] = target.Pos[2] + th*0.85
 		}
 		shootable, isMech = true, true
 	case farm != nil:
@@ -938,7 +967,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 			return ey < tolY && ep < tolP
 		}
 		for i, w := range me.Weapons {
-			if w == nil || i > 1 || (shotTarget != target && w.Kind != "laser") {
+			if w == nil || i > 1 {
 				continue
 			}
 			switch w.Kind {
@@ -959,10 +988,10 @@ func (b *Brain) step(o *Obs, act *Action) {
 				if b.P.Lethal && w.Charge >= w.Stats.MinCharge && w.Charge < full-0.051 {
 					dmg := w.Stats.Damage * (w.Stats.MinFrac + (1-w.Stats.MinFrac)*w.Charge/full) *
 						(1 + b.Cfg.Cubes.DamagePerCube*float64(min(me.Cubes, b.Cfg.Cubes.StatCap)))
-					if holds(shotTarget.Weapons, "mortar") {
+					if holds(target.Weapons, "mortar") {
 						dmg *= 1 + w.Stats.Cookoff
 					}
-					if dmg*0.8 >= shotTarget.HP && math.Abs(angDiff(hy, me.Aim[0])) < tolY*0.9 && math.Abs(hp-me.Aim[1]) < tolP {
+					if dmg*0.8 >= target.HP && math.Abs(angDiff(hy, me.Aim[0])) < tolY*0.9 && math.Abs(hp-me.Aim[1]) < tolP {
 						aim = [2]float64{hy, hp}
 						act.Fire[i] = false
 						break
@@ -1006,7 +1035,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 
 	}
 
-	if shotTarget == nil && foe != nil {
+	if target == nil && foe != nil {
 
 		for i, w := range me.Weapons {
 			if w != nil && i < 2 && w.Kind == "laser" && w.Cooldown <= 0.05 && foe.Dist < w.Stats.Range && w.Charge < w.Stats.Charge+w.Stats.HoldS-0.35 {
@@ -1076,18 +1105,6 @@ func (b *Brain) step(o *Obs, act *Action) {
 	act.Move = [2]float64{mx, my}
 	act.Boost = boost && (mx != 0 || my != 0)
 	b.Mode = mode
-}
-
-// Finish a charge on the last engaged opponent if it remains in the open.
-func (b *Brain) continuingLaserTarget(laser *WeaponState) *Track {
-	if laser == nil || laser.Stats.Charge <= 0 || laser.Charge < laser.Stats.Charge*0.5 || b.now-b.stickAt > 0.401 {
-		return nil
-	}
-	t := b.tracks[b.stickID]
-	if t == nil || t.Seen != b.now || !t.LOS || t.Dist > laser.Stats.Range*0.97 {
-		return nil
-	}
-	return t
 }
 
 func (b *Brain) escape(me *Self, mx, my *float64, boost, jump *bool) bool {
@@ -1904,6 +1921,12 @@ func (b *Brain) dodge(o *Obs) (dx, dy float64, laser bool) {
 		}
 		toMe := math.Atan2(cy-m.Pos[1], cx-m.Pos[0])
 		if math.Abs(angDiff(m.Aim[0], toMe)) > 0.15 {
+			continue
+		}
+		enemyMuzzle := m.Pos
+		enemyMuzzle[2] += b.Cfg.Mech.MuzzleHeight * b.scaleOf(m.Cubes)
+		if !b.W.Clear(enemyMuzzle, Vec3{cx, cy, cz}) &&
+			!b.W.Clear(enemyMuzzle, Vec3{cx, cy, me.Pos[2] + me.Stats.Height*0.85}) {
 			continue
 		}
 		dx += math.Cos(toMe+math.Pi/2*b.strafe) * 1.5
