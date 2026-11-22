@@ -1,41 +1,30 @@
-# Mech Royale bot
+# Attrition-control Mech Royale candidate
 
-Python 3 and Node.js 24+/Bun 1.4 implementation of the `mechfight/1` protocol. The production entrypoint is `bot.ts`; the container uses only the pinned Bun runtime and the organizer-provided map.
-
-## Architecture
-
-The controller is split into explicit state, strategy, navigation, and combat stages inside `src/bot.ts`, backed by the terrain/prism model in `src/map.ts`:
-
-1. **State estimation:** persistent mech tracks, attackers, damage/sound bearings, weapon/cube/NPC memories, and target hysteresis.
-2. **Strategy:** zone, fight/retreat, cover/heal, weapon/cube/NPC/crate/supply-drop goals, with separate selective engagement after confirmed free-for-all evidence.
-3. **Navigation:** ground clearance checks and time-sliced Dijkstra paths, local combat steering, and jump/jet recovery.
-4. **Combat:** actual-torso aiming, predictive gun lead, shared-torso gun/laser arbitration, laser charge/release, lightning cones, and mortar solutions.
-5. **Execution:** bounded path work, one protocol-valid action per observation, and wrapper fallback/coasting on errors.
+This is a **separate candidate branch** for the Builders Mech Royale track. It preserves the previous TypeScript bot and selected 5.46 rollback on `main`; this branch runs a distinct Go combat/cover controller.
 
 ## Provenance
 
-The starting controller is the MIT-licensed TTUN/r1ver economy implementation at `af337d5c1275d03478685bd4936c8a551fa6b200`. r1ver records **5.10 official practice points** for that exact revision (receipt `BB-EAEAF89A`). That is their result, not this repository's score. The submitted `c029917` Evans bot (reported 2.75) is preserved in `baselines/original/`; the r1ver baseline is in `baselines/r1ver/`. Relevant copyright notices are retained in `LICENSE` and `baselines/r1ver/LICENSE`.
+The runtime is the MIT-licensed Kanyaraasi/giddygiddyboy lineage at public revision `24d68e50ecd1ecb272b614b8a38c509bc8eeee5f`. Its documentation attributes a **5.81 official practice aggregate** to the underlying `c6f6ad8` control. That score belongs to the original authors, not to this repository or this candidate. Our local comparison of this exact runtime passed the official replay and beat the previous 5.46 TypeScript controller in one 16-seed approximate practice comparison, 5.125 to 4.50. These local points are not official results.
 
-Research and negative results are documented in `docs/EXPERIMENTS.md`. An unlicensed third-party implementation was used only as behavioral research; none of its source is included in production.
+`LICENSE` contains Team Kanyaraasi's MIT notice. `THIRD_PARTY_LICENSES` retains the giddygiddyboy notice. The protocol map is supplied by the scorer, not bundled here.
 
-## Tests
+## Validation
 
-Set `MECHFIGHT_KIT` to an extracted official starter kit, then:
+- Exact runtime compiled with Go 1.26.1.
+- Official protocol replay: 300/300 timely responses, max 2.3 ms on the validation host, zero late actions.
+- Paired practice engine: 5.125 vs 4.50 over 16 seeds, 8 candidate wins, 6 losses, 2 ties.
+- Paired practice engine is approximate; official score remains unmeasured.
+
+## Build
+
+The root multi-stage Dockerfile builds a static linux/amd64 binary with the pinned Go 1.26.1 image and runs it as uid 65534 in a scratch image. No runtime downloads or third-party Go modules are needed.
 
 ```sh
-python3 -m unittest discover -v
-python3 "$MECHFIGHT_KIT/check/check.py" -- node bot.ts
+docker build --platform linux/amd64 -t attrition-control .
+python3 /path/to/mechfight-kit/check/check.py --map-dir /arena -- docker run --rm -i \
+  --network none --cpus 1 --memory 512m --read-only \
+  --tmpfs /tmp:rw,size=64m --user 65534:65534 \
+  -v /path/to/mechfight-kit/arena:/arena:ro attrition-control
 ```
 
-Local practice and free-for-all simulators are approximate, not official score predictors:
-
-```sh
-python3 tools/eval/simulate.py --kit "$MECHFIGHT_KIT" \
-  --bot bot.ts --baseline baselines/r1ver/bot.ts --seed 19551 --matches 16 \
-  --output eval-results/candidate-vs-r1ver.json
-python3 tools/eval/ffa_league.py --kit "$MECHFIGHT_KIT" \
-  --bot bot.ts --baseline baselines/r1ver/bot.ts --seed 601 --pairs 8 \
-  --output eval-results/ffa-candidate-vs-r1ver.json
-```
-
-The official scorer alone determines the 48-match practice score. Docker conformance must be run with the map mounted at `/arena`, no network, one CPU, 512 MB RAM, read-only root, and uid 65534.
+Submit this branch only as an official experiment. Keep `f1affd7cb902` (the 5.46 TypeScript entry) selected unless the official result improves it.
