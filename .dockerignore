@@ -7,6 +7,7 @@
 !mech/
 !mech/brain.go
 !mech/export.go
+!mech/flags.go
 !mech/types.go
 !mech/world.go
 !LICENSE

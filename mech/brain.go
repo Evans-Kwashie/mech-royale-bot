@@ -97,6 +97,15 @@ type Brain struct {
 	otherDead          int
 	stickID            int
 	stickAt, loseAt    float64
+
+	F           Flags
+	coverFailAt float64
+	lastDealt   float64
+	lastTaken   float64
+	hurtBy      int
+	regen       bool
+	soundAt     float64
+	soundYaw    float64
 }
 
 type Params struct {
@@ -166,6 +175,7 @@ func NewBrain(h *Hello, w *World) *Brain {
 		tracks: map[int]*Track{}, npcs: map[int]*Track{}, crates: map[int]*known{}, cubes: map[int]*known{},
 		pickups: map[int]*known{}, bad: map[int]float64{}, strafe: 1, lootID: -1, lastHurt: -100, lastThreatAt: -100,
 		holdStart: -1,
+		F:         Active, coverFailAt: -100, lastDealt: -100, lastTaken: -100, hurtBy: -1, soundAt: -100,
 	}
 }
 
@@ -290,7 +300,14 @@ func (b *Brain) observe(o *Obs) {
 	for i := range o.Events {
 		e := &o.Events[i]
 		switch e.Type {
+		case "hit":
+			b.lastDealt = now
 		case "damaged":
+			b.lastTaken = now
+			b.hurtBy = -1
+			if e.By != nil {
+				b.hurtBy = *e.By
+			}
 			b.dropQuietUntil = now + 6
 			if e.Weapon == "npc" && e.Bearing != nil {
 				b.npcHurt, b.npcBearing = now, *e.Bearing
@@ -317,12 +334,28 @@ func (b *Brain) observe(o *Obs) {
 		b.base, b.baseSet = b.P, true
 		b.startAlive = o.Alive
 	}
-	if b.startAlive-o.Alive-b.kills > 0 {
+	for i := range o.Sounds {
+		s := &o.Sounds[i]
+		switch s.Kind {
+		case "gun", "laser", "laser_charge", "lightning", "mortar":
+			if s.Dist != "far" && s.Age < 0.5 && (now-s.Age > b.soundAt || s.Dist == "near") {
+				b.soundAt, b.soundYaw = now-s.Age, s.Bearing
+			}
+		}
+	}
+	foreign := b.startAlive - o.Alive - b.kills
+	if foreign > 0 {
 		b.otherDead++
 	} else {
 		b.otherDead = 0
 	}
-	if b.otherDead >= 5 {
+	if b.F.ModeDetect {
+		// A single late foreign death in practice is usually the zone or a drone,
+		// not a rival; two (or one early) means other mechs are killing each other.
+		if b.otherDead >= 5 && (foreign >= 2 || now < 100) {
+			b.notPractice = true
+		}
+	} else if b.otherDead >= 5 {
 		b.notPractice = true
 	}
 	if on := b.base.Practice && !b.notPractice && now > 20; on != b.pracOn {
@@ -444,11 +477,39 @@ var upgradeOrderLaser = []string{
 	"mortar_reload", "mortar_splash", "mortar_velocity", "sensors", "jets", "laser_pierce",
 }
 
+// Survival first, then the weapon we hold, then energy for lightning/boost.
+var upgradeOrderLaserRegen = []string{
+	"plating", "armor", "nanites", "laser_damage", "laser_charge", "servos", "reactor", "lightning_efficiency", "lightning_range",
+	"gun_damage", "gun_rate", "gyros", "lightning_chain", "capacitor", "gun_mag", "gun_velocity",
+	"mortar_reload", "mortar_splash", "mortar_velocity", "sensors", "jets", "laser_pierce",
+}
+
+var upgradeOrderRegen = []string{
+	"plating", "armor", "nanites", "gun_damage", "lightning_efficiency", "gun_rate", "lightning_range", "reactor", "servos",
+	"laser_damage", "laser_charge", "gun_mag", "gun_velocity", "gyros", "lightning_chain", "capacitor",
+	"mortar_reload", "mortar_splash", "mortar_velocity", "sensors", "jets", "laser_pierce",
+}
+
+func (b *Brain) pickUpgrade(of *Offer, hasLaser bool) int {
+	if !b.F.CubeCap {
+		return pickUpgrade(of, b.P.LaserUp)
+	}
+	order := upgradeOrderRegen
+	if b.P.LaserUp || hasLaser {
+		order = upgradeOrderLaserRegen
+	}
+	return pickFrom(of, order)
+}
+
 func pickUpgrade(of *Offer, laserUp bool) int {
 	order := upgradeOrder
 	if laserUp {
 		order = upgradeOrderLaser
 	}
+	return pickFrom(of, order)
+}
+
+func pickFrom(of *Offer, order []string) int {
 	best, bestRank := 0, 1<<30
 	for i, c := range of.Choices {
 		rank := len(order)
@@ -477,14 +538,14 @@ func (b *Brain) step(o *Obs, act *Action) {
 	z := &o.Zone
 	hpFrac := me.HP / math.Max(1, me.MaxHP)
 
-	if o.Offer != nil && len(o.Offer.Choices) > 0 {
-		p := pickUpgrade(o.Offer, b.P.LaserUp)
-		act.Pick = &p
-	}
-
 	_, gun := hasWeapon(me.Weapons, "gun")
 	_, light := hasWeapon(me.Weapons, "lightning")
 	_, laser := hasWeapon(me.Weapons, "laser")
+
+	if o.Offer != nil && len(o.Offer.Choices) > 0 {
+		p := b.pickUpgrade(o.Offer, laser != nil)
+		act.Pick = &p
+	}
 	late := z.NextRadius <= 70 || o.Alive <= 3
 
 	var seen []*Track
@@ -565,6 +626,25 @@ func (b *Brain) step(o *Obs, act *Action) {
 		if t.Closing > 3 {
 			s -= 15
 		}
+		if b.F.FrontArmor && math.Abs(angDiff(t.Aim[0], toMe)) > math.Pi/2 {
+			s -= 25 // its back is to us: we deal rear_mult damage and it is not shooting us
+		}
+		if b.F.LightTarget {
+			if light != nil && t.Dist < light.Stats.Range-2 {
+				if t.Charging && holds(t.Weapons, "laser") {
+					s -= 35 // a lightning hit shorts its laser for short_s
+				}
+				for _, u := range b.tracks {
+					if u != t && now-u.Seen < 0.5 && hyp(u.Pos[0]-t.Pos[0], u.Pos[1]-t.Pos[1]) < light.Stats.ChainRange {
+						s -= 15 // chain arcs on to a second mech
+						break
+					}
+				}
+			}
+			if laser != nil && holds(t.Weapons, "mortar") {
+				s -= 30 // cook-off: +60% laser damage
+			}
+		}
 		if s < bestScore {
 			bestScore, target = s, t
 		}
@@ -575,6 +655,13 @@ func (b *Brain) step(o *Obs, act *Action) {
 	foe := target
 	if foe == nil && b.P.Peek {
 		foe = hidden
+	}
+	// PrePeek: in practice (Peek off) a laser holder hunts a foe that just ducked
+	// behind cover, charging while still hidden and stepping out once charged.
+	prePeek := false
+	if b.F.PrePeek && foe == nil && hidden != nil && laser != nil && laser.Cooldown <= 0.3 &&
+		hidden.Dist < laser.Stats.Range*0.9 && hidden.Dist > 20 && hpFrac > 0.45 && now-hidden.Seen < 1.5 {
+		foe, prePeek = hidden, true
 	}
 	danger := false
 	crowd := 0
@@ -594,6 +681,9 @@ func (b *Brain) step(o *Obs, act *Action) {
 	_, myLaser := hasWeapon(me.Weapons, "laser")
 	outgunned := target != nil && holds(target.Weapons, "laser") && myLaser == nil && target.Dist > 55 && hpFrac < 0.8
 	swamped := b.P.CrowdHide && (crowd >= 3 || (crowd == 2 && hpFrac < 0.65) || outgunned)
+	if b.F.StayInFight {
+		swamped = b.P.CrowdHide && (crowd >= 4 || (crowd == 2 && hpFrac < 0.3) || outgunned)
+	}
 	if b.P.OddsFlee > 0 && target != nil && !finishing && b.odds(me, target, now, false) < b.P.OddsFlee {
 		b.oddsFleeUntil = now + 5
 	}
@@ -628,6 +718,25 @@ func (b *Brain) step(o *Obs, act *Action) {
 			b.loseAt = now
 		}
 		b.retreat = now-b.loseAt < 1.5 && b.loseAt > 0
+	}
+
+	// RegenHold: regen needs regen_delay with no damage dealt or taken, so a
+	// wounded mech that keeps trading never heals. Break contact and hold fire.
+	breach := false
+	for _, t := range seen {
+		if t.Seen == now && t.LOS && t.Dist < 35 {
+			breach = true
+		}
+	}
+	if b.F.RegenHold {
+		killable := target != nil && target.HP < 120 && target.Dist < 100
+		if !b.regen && hpFrac < 0.55 && me.InZone && !late && !killable && !breach && !finishing {
+			b.regen = true
+			b.coverAt = -1
+		}
+		if b.regen && (hpFrac > 0.85 || breach || late || !me.InZone) {
+			b.regen = false
+		}
 	}
 
 	exposed := false
@@ -669,6 +778,15 @@ func (b *Brain) step(o *Obs, act *Action) {
 		mx, my = b.travel(me, zgx, zgy)
 		boost = (!me.InZone || now+tNeed >= deadline) && me.Energy > 5
 		mode = "zone"
+	case b.regen:
+		mode = "regen"
+		if b.coverMove(o, seen, &mx, &my) {
+			boost = me.Energy > 10 && (mx != 0 || my != 0)
+		} else if now-b.lastHurt < 3 && b.hideFromBearing(o, seen, &mx, &my) {
+			boost = me.Energy > 10 && (mx != 0 || my != 0)
+		} else if zdist > 3 && zoneShould {
+			mx, my = b.travel(me, zgx, zgy)
+		}
 	case b.retreat && !finishing && !late:
 		if b.coverMove(o, seen, &mx, &my) {
 			boost = me.Energy > 10 && (mx != 0 || my != 0)
@@ -715,6 +833,13 @@ func (b *Brain) step(o *Obs, act *Action) {
 		if ready {
 			wantLos = 1
 		}
+		if prePeek {
+			// Charge in cover; step out only once the shot is nearly full.
+			wantLos = -1
+			if laser.Charge >= laser.Stats.Charge*0.65 {
+				wantLos = 1
+			}
+		}
 		if b.P.Peek && !hot {
 			for _, t := range seen {
 				if t.Seen == now && t.Charging && math.Abs(angDiff(t.Aim[0], math.Atan2(y-t.Pos[1], x-t.Pos[0]))) < 0.3 {
@@ -722,18 +847,26 @@ func (b *Brain) step(o *Obs, act *Action) {
 				}
 			}
 		}
-		if keep := b.P; b.P.Finish > 0 && foe.HP < 0.38*foe.MaxHP && hpFrac > 0.42 && crowd <= 2 {
+		savedPeek := b.P.Peek
+		if prePeek {
+			b.P.Peek = true // use the peek ring and cover-edge scoring
+		}
+		if keep := b.P; b.P.Finish > 0 && foe.HP < 0.38*foe.MaxHP && hpFrac > 0.42 && crowd <= 2 && !prePeek {
 			b.P.GunRange, b.P.LaserRange, b.P.LightRange = b.P.Finish, b.P.Finish, b.P.Finish
 			mx, my = b.fightMove(o, foe, seen, wantLos)
 			b.P = keep
 		} else {
 			mx, my = b.fightMove(o, foe, seen, wantLos)
 		}
+		b.P.Peek = savedPeek
 		if light != nil && foe.Dist > 50 && me.Energy > 55 && wantLos > 0 {
 			boost = true
 		}
 		mode = "fight"
-		if b.P.FightLoot > 0 {
+		if prePeek {
+			mode = "prepeek"
+		}
+		if b.P.FightLoot > 0 && (!b.F.CubeCap || b.wantCubes(me)) {
 			r := b.P.FightLoot
 			if hpFrac <= 0.5 {
 				r *= 0.57
@@ -906,6 +1039,10 @@ func (b *Brain) step(o *Obs, act *Action) {
 	if !isMech && target == nil && (b.retreat || hpFrac < 0.5) && !b.P.Econ && !defend {
 		shootable = false
 	}
+	if b.regen {
+		shootable = false // any hit dealt restarts the regen timer
+	}
+	laserDecided := false
 
 	if shootable {
 		dist := hyp(tp[0]-x, tp[1]-y)
@@ -951,6 +1088,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 				if !isMech || dist > w.Stats.Range*0.97 {
 					break
 				}
+				laserDecided = true
 				full := w.Stats.Charge
 				if b.P.Lethal && w.Charge >= w.Stats.MinCharge && w.Charge < full-0.051 {
 					dmg := w.Stats.Damage * (w.Stats.MinFrac + (1-w.Stats.MinFrac)*w.Charge/full) *
@@ -1002,13 +1140,40 @@ func (b *Brain) step(o *Obs, act *Action) {
 
 	}
 
-	if target == nil && foe != nil {
+	if target == nil && foe != nil && !b.regen {
 
 		for i, w := range me.Weapons {
 			if w != nil && i < 2 && w.Kind == "laser" && w.Cooldown <= 0.05 && foe.Dist < w.Stats.Range && w.Charge < w.Stats.Charge+w.Stats.HoldS-0.35 {
 				act.Fire[i] = true
 			}
 		}
+	}
+
+	// LaserHold: letting go of the trigger fires. If the mech we were charging on
+	// just slipped behind cover, keep holding and aim at where it is, so the beam
+	// is not spent on a wall and the shot is ready when it reappears.
+	if b.F.LaserHold && !laserDecided && !b.regen {
+		h := hidden
+		if h == nil {
+			h = foe
+		}
+		for i, w := range me.Weapons {
+			if w == nil || i > 1 || w.Kind != "laser" || w.Charge <= 0 || act.Fire[i] || h == nil {
+				continue
+			}
+			if h.Dist < w.Stats.Range*0.97 && w.Charge < w.Stats.Charge+w.Stats.HoldS-0.3 {
+				act.Fire[i] = true
+				if !haveAim {
+					c := b.center(h)
+					aim = [2]float64{math.Atan2(c[1]-muzzle[1], c[0]-muzzle[0]),
+						math.Atan2(c[2]-muzzle[2], hyp(c[0]-muzzle[0], c[1]-muzzle[1]))}
+					haveAim = true
+				}
+			}
+		}
+	}
+	if b.regen {
+		act.Fire = [2]bool{}
 	}
 
 	if !haveAim {
@@ -1021,9 +1186,22 @@ func (b *Brain) step(o *Obs, act *Action) {
 				}
 			}
 		}
+		var hurter *Track
+		if b.F.FrontArmor && now-b.lastHurt < 1.5 && b.hurtBy >= 0 {
+			if t := b.tracks[b.hurtBy]; t != nil && now-t.Seen < 2.5 {
+				hurter = t
+			}
+		}
 		switch {
+		case hurter != nil:
+			// Keep whoever is shooting us inside the front arc (rear hits take rear_mult).
+			aim[0] = math.Atan2(hurter.Pos[1]-y, hurter.Pos[0]-x)
+		case b.F.FrontArmor && now-b.lastHurt < 1.5 && (watch == nil || !watch.LOS):
+			aim[0] = b.hurtBearing
 		case watch != nil:
 			aim[0] = math.Atan2(watch.Pos[1]-y, watch.Pos[0]-x)
+		case b.F.FrontArmor && now-b.soundAt < 1.5 && !(b.npcHurt > 0 && now-b.npcHurt < 2.5):
+			aim[0] = b.soundYaw
 		case b.npcHurt > 0 && now-b.npcHurt < 2.5:
 			aim[0] = b.npcBearing
 		case now-b.lastHurt < 2.5:
@@ -1064,6 +1242,9 @@ func (b *Brain) step(o *Obs, act *Action) {
 				break
 			}
 			one := 1
+			if b.F.DualPower && b.gunSwap(me, p.Kind) {
+				one = 0 // keep the power weapon in slot 1, leave the gun
+			}
 			act.Drop = &one
 		}
 		break
@@ -1123,6 +1304,13 @@ func (b *Brain) escape(me *Self, mx, my *float64, boost, jump *bool) bool {
 
 func (b *Brain) wantPickup(me *Self, kind string) bool {
 	if kind == "gun" {
+		if b.F.DualPower {
+			if _, l := hasWeapon(me.Weapons, "laser"); l != nil {
+				if _, z := hasWeapon(me.Weapons, "lightning"); z != nil {
+					return false
+				}
+			}
+		}
 		return len(me.Weapons) > 0 && me.Weapons[0] == nil
 	}
 	if i, _ := hasWeapon(me.Weapons, kind); i >= 0 {
@@ -1141,7 +1329,28 @@ func (b *Brain) wantPickup(me *Self, kind string) bool {
 	if len(me.Weapons) > 1 && me.Weapons[1] != nil {
 		cur = rank(me.Weapons[1].Kind)
 	}
+	if b.F.DualPower && b.gunSwap(me, kind) {
+		return true
+	}
 	return rank(kind) > cur
+}
+
+// gunSwap: slot 0 holds the gun, slot 1 a power weapon, and kind is the other
+// power weapon. Never while a laser is charging (it cannot be swapped then).
+func (b *Brain) gunSwap(me *Self, kind string) bool {
+	if len(me.Weapons) < 2 || me.Weapons[0] == nil || me.Weapons[1] == nil || me.Weapons[0].Kind != "gun" {
+		return false
+	}
+	s1 := me.Weapons[1].Kind
+	if !((s1 == "laser" && kind == "lightning") || (s1 == "lightning" && kind == "laser")) {
+		return false
+	}
+	for _, w := range me.Weapons {
+		if w != nil && w.Kind == "laser" && w.Charge > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Brain) lead(muzzle, tp, tv Vec3, speed float64, grounded bool) (float64, float64) {
@@ -1340,6 +1549,9 @@ func (b *Brain) fightMove(o *Obs, tg *Track, seen []*Track, wantLos float64) (fl
 	mh := me.Stats.MuzzleHeight
 	var cube *known
 	for _, c := range b.cubes {
+		if b.F.CubeCap && !b.wantCubes(me) {
+			break
+		}
 		if d := hyp(c.Pos[0]-x, c.Pos[1]-y); d < 40 && (cube == nil || d < hyp(cube.Pos[0]-x, cube.Pos[1]-y)) && math.Abs(c.Pos[2]-me.Pos[2]) < 4 {
 			cube = c
 		}
@@ -1450,6 +1662,9 @@ func (b *Brain) coverMove(o *Obs, seen []*Track, mx, my *float64) bool {
 		*mx, *my = b.travelCover(me)
 		return true
 	}
+	if b.F.CoverCache && b.now-b.coverFailAt < 0.4 {
+		return false
+	}
 	b.coverAt = b.now
 	if hidden(x, y) && b.zonePenalty(&o.Zone, x, y) == 0 {
 		b.coverOK = true
@@ -1511,6 +1726,7 @@ func (b *Brain) coverMove(o *Obs, seen []*Track, mx, my *float64) bool {
 	}
 	if bestC < 0 {
 		b.coverOK = false
+		b.coverFailAt = b.now
 		return false
 	}
 	gx, gy := w.CellPos(bestC)
@@ -1539,7 +1755,7 @@ type lootChoice struct {
 func (b *Brain) opportunisticDrop(o *Obs, d *Drop) bool {
 	me := &o.Self
 	now := b.now
-	if !b.pracOn || b.retreat || !me.InZone || !me.Grounded || b.W == nil ||
+	if (!b.pracOn && !b.F.DropPrep) || b.retreat || b.regen || !me.InZone || !me.Grounded || b.W == nil ||
 		b.Cfg.Cubes.StatCap <= 0 || me.Cubes < 0 || me.Cubes >= b.Cfg.Cubes.StatCap ||
 		now <= b.dropQuietUntil || len(o.Projectiles) > 0 {
 		return false
@@ -1733,7 +1949,14 @@ func (b *Brain) chooseLoot(o *Obs, hpFrac float64, danger bool) *lootChoice {
 	if me.Cubes >= b.cubeCap() {
 		cubeV = 25
 	}
+	crateV := cubeV * 0.6
+	if b.F.CubeCap && !b.wantCubes(me) {
+		cubeV = 0
+	}
 	for _, c := range b.cubes {
+		if cubeV <= 0 {
+			break
+		}
 		if hyp(c.Pos[0]-x, c.Pos[1]-y) < math.Max(60, b.P.LootRadius*0.7) {
 			consider("cube", c.ID, c.Pos, cubeV)
 		}
@@ -1745,7 +1968,7 @@ func (b *Brain) chooseLoot(o *Obs, hpFrac float64, danger bool) *lootChoice {
 	if hpFrac > farmHP && !danger && now < b.P.CrateUntil {
 		for _, c := range b.crates {
 			if hyp(c.Pos[0]-x, c.Pos[1]-y) < b.P.LootRadius {
-				consider("crate", c.ID, c.Pos, cubeV*0.6)
+				consider("crate", c.ID, c.Pos, crateV)
 			}
 		}
 		if b.P.FarmNPC && me.Cubes < b.cubeCap() {
@@ -1813,6 +2036,9 @@ func (b *Brain) homeCost(o *Obs, px, py float64) float64 {
 		}
 	}
 	for i := range o.Drops {
+		if b.F.DropPrep {
+			break
+		}
 		crowd += math.Max(0, 60-hyp(o.Drops[i].Pos[0]-px, o.Drops[i].Pos[1]-py)) / 60
 	}
 	edge := hyp(px-z.NextCenter[0], py-z.NextCenter[1]) / math.Max(30, z.NextRadius)
@@ -1975,6 +2201,31 @@ func squadParams(p Params) Params {
 	p.Finish = 14
 
 	return p
+}
+
+// wantCubes: past stat_cap a cube only adds size (+5% hitbox, uncapped), so only
+// chase one when it nearly completes an upgrade threshold and nobody is around.
+func (b *Brain) wantCubes(me *Self) bool {
+	cp := b.Cfg.Cubes.StatCap
+	if cp <= 0 || me.Cubes < cp {
+		return true
+	}
+	next := -1
+	for _, th := range b.Cfg.Cubes.UpgradeThresholds {
+		if th > me.Cubes {
+			next = th
+			break
+		}
+	}
+	if next < 0 || next-me.Cubes > 2 {
+		return false
+	}
+	for _, t := range b.tracks {
+		if b.now-t.Seen < 3 && t.Dist < 120 {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Brain) cubeCap() int {

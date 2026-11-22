@@ -11,6 +11,11 @@ import (
 )
 
 func main() {
+	if s := os.Getenv("MECH_FLAGS"); s != "" {
+		f, unknown := mech.ParseFlags(s)
+		mech.Active = f
+		fmt.Fprintf(os.Stderr, "flags %+v unknown=%v\n", f, unknown)
+	}
 	lines := make(chan []byte, 256)
 	go func() {
 		r := bufio.NewReaderSize(os.Stdin, 1<<20)
