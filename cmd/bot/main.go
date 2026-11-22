@@ -10,8 +10,16 @@ import (
 	"mechbot/mech"
 )
 
+const defaultFlags = ""
+
 func main() {
-	if s := os.Getenv("MECH_FLAGS"); s != "" {
+	// defaultFlags is the flag set a submission plays with; MECH_FLAGS overrides it
+	// for local A/B runs ("none" = all off).
+	s := defaultFlags
+	if e, ok := os.LookupEnv("MECH_FLAGS"); ok {
+		s = e
+	}
+	if s != "" {
 		f, unknown := mech.ParseFlags(s)
 		mech.Active = f
 		fmt.Fprintf(os.Stderr, "flags %+v unknown=%v\n", f, unknown)

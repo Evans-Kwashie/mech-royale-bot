@@ -16,6 +16,7 @@ type Flags struct {
 	DropPrep    bool // no drop-avoidance at home, opportunistic drops in FFA too
 	LightTarget bool // lightning prefers charging lasers and chain clusters; laser prefers mortar holders
 	DualPower   bool // swap the gun out for a second power weapon (laser + lightning)
+	EarlySquad  bool // switch to the practice parameter set at t=5 s instead of 20 s
 }
 
 // Active is applied to every new Brain. Set it before NewBrain.
@@ -33,6 +34,7 @@ var flagNames = map[string]func(*Flags) *bool{
 	"dropprep":    func(f *Flags) *bool { return &f.DropPrep },
 	"lighttarget": func(f *Flags) *bool { return &f.LightTarget },
 	"dualpower":   func(f *Flags) *bool { return &f.DualPower },
+	"earlysquad":  func(f *Flags) *bool { return &f.EarlySquad },
 }
 
 // ParseFlags reads a comma-separated list such as "laserhold,cubecap".

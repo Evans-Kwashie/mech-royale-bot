@@ -358,7 +358,11 @@ func (b *Brain) observe(o *Obs) {
 	} else if b.otherDead >= 5 {
 		b.notPractice = true
 	}
-	if on := b.base.Practice && !b.notPractice && now > 20; on != b.pracOn {
+	squadAt := 20.0
+	if b.F.EarlySquad {
+		squadAt = 5
+	}
+	if on := b.base.Practice && !b.notPractice && now > squadAt; on != b.pracOn {
 		b.pracOn = on
 		b.P = b.base
 		if on {
