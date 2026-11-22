@@ -10,7 +10,7 @@ import (
 	"mechbot/mech"
 )
 
-const defaultFlags = "earlysquad"
+const defaultFlags = "earlysquad,laserhold,frontarmor"
 
 func main() {
 	// defaultFlags is the flag set a submission plays with; MECH_FLAGS overrides it
