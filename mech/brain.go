@@ -630,6 +630,9 @@ func (b *Brain) step(o *Obs, act *Action) {
 		if t.Closing > 3 {
 			s -= 15
 		}
+		if zc := b.curZone(&o.Zone); hyp(t.Pos[0]-zc.X, t.Pos[1]-zc.Y) > zc.R-5 && now-t.HitMe > 4 {
+			s += 60 // chasing a mech outside the zone drags us into zone damage
+		}
 		if b.F.FrontArmor && math.Abs(angDiff(t.Aim[0], toMe)) > math.Pi/2 {
 			s -= 25 // its back is to us: we deal rear_mult damage and it is not shooting us
 		}
