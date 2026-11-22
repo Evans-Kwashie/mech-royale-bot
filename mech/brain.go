@@ -1093,6 +1093,9 @@ func (b *Brain) step(o *Obs, act *Action) {
 					break
 				}
 				laserDecided = true
+				if b.F.ZoneCharge && mode == "zone" && w.Charge <= 0 {
+					break // a new charge halves speed exactly when we must outrun the zone
+				}
 				full := w.Stats.Charge
 				if b.P.Lethal && w.Charge >= w.Stats.MinCharge && w.Charge < full-0.051 {
 					dmg := w.Stats.Damage * (w.Stats.MinFrac + (1-w.Stats.MinFrac)*w.Charge/full) *
@@ -1144,7 +1147,7 @@ func (b *Brain) step(o *Obs, act *Action) {
 
 	}
 
-	if target == nil && foe != nil && !b.regen {
+	if target == nil && foe != nil && !b.regen && !(b.F.ZoneCharge && mode == "zone") {
 
 		for i, w := range me.Weapons {
 			if w != nil && i < 2 && w.Kind == "laser" && w.Cooldown <= 0.05 && foe.Dist < w.Stats.Range && w.Charge < w.Stats.Charge+w.Stats.HoldS-0.35 {
